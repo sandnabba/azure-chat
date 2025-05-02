@@ -5,11 +5,13 @@ from datetime import datetime
 import os
 from typing import Dict, List, Optional
 import json
+from pydantic import BaseModel
 
 # Change absolute imports to relative imports for better container compatibility
 from src.database import CosmosDBConnection
 from src.models import ChatMessage, ChatRoom, User
 from src.storage import AzureStorageService  # Import the storage service
+from src.auth_utils import hash_password, verify_password  # Import the password utilities
 
 app = FastAPI(title="Azure Chat Service API")
 
@@ -32,6 +34,23 @@ storage_service = AzureStorageService()
 # Store active connections
 active_connections: Dict[str, Dict[str, WebSocket]] = {}  # chatId -> {userId: websocket}
 active_users: Dict[str, User] = {}  # userId -> User
+
+# Authentication models
+class UserRegister(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class UserResponse(BaseModel):
+    id: str
+    username: str
+    email: str
+    created_at: Optional[str]
+    last_login: Optional[str]
 
 # Add a debug endpoint to see environment variables
 @app.get("/debug")
@@ -255,6 +274,68 @@ async def send_message(
 
     return saved_message
 
+@app.post("/api/auth/register", response_model=UserResponse)
+async def register_user(user_data: UserRegister):
+    """Register a new user with email, username and password."""
+    # Validate input
+    if len(user_data.username) < 3:
+        raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
+    if len(user_data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+    
+    # Create user object with hashed password
+    user = User(
+        id=str(uuid.uuid4()),
+        username=user_data.username,
+        email=user_data.email,
+        password=hash_password(user_data.password),
+        created_at=datetime.utcnow().isoformat()
+    )
+    
+    # Save user to database
+    created_user = await db.create_user(user)
+    if not created_user:
+        raise HTTPException(status_code=400, detail="Username or email already exists")
+    
+    # Add to active users
+    active_users[created_user.id] = created_user
+    
+    # Return user data (excluding password)
+    return UserResponse(
+        id=created_user.id,
+        username=created_user.username,
+        email=created_user.email,
+        created_at=created_user.created_at,
+        last_login=created_user.last_login
+    )
+
+@app.post("/api/auth/login", response_model=UserResponse)
+async def login_user(login_data: UserLogin):
+    """Authenticate a user with email and password."""
+    # Get user by email
+    user = await db.get_user_by_email(login_data.email)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Verify password
+    if not verify_password(login_data.password, user.password):
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    # Update last login timestamp
+    await db.update_user_last_login(user.id)
+    
+    # Add to active users
+    active_users[user.id] = user
+    
+    # Return user data (excluding password)
+    return UserResponse(
+        id=user.id,
+        username=user.username,
+        email=user.email,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )
+
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     # Auto-register the user if they don't exist
@@ -359,6 +440,12 @@ async def startup_event():
             print(f"WARNING: Failed to get/create {db.message_container} container")
         else:
             print(f"Successfully verified {db.message_container} container")
+            
+        users_container = await db._get_container(db.user_container)
+        if not users_container:
+            print(f"WARNING: Failed to get/create {db.user_container} container")
+        else:
+            print(f"Successfully verified {db.user_container} container")
             
         general_room = ChatRoom(
             id="general",

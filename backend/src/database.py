@@ -6,6 +6,8 @@ from azure.cosmos import CosmosClient, exceptions
 from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from dotenv import load_dotenv
 import json
+import uuid
+from datetime import datetime
 
 from src.models import ChatMessage, ChatRoom, User
 
@@ -20,6 +22,7 @@ class CosmosDBConnection:
         self.database_name = os.getenv("COSMOS_DATABASE", "AzureChatDB")
         self.message_container = os.getenv("COSMOS_MESSAGES_CONTAINER", "Messages")
         self.room_container = os.getenv("COSMOS_ROOMS_CONTAINER", "Rooms")
+        self.user_container = os.getenv("COSMOS_USERS_CONTAINER", "Users")
         
         # Initialize in-memory storage regardless of mode to avoid AttributeError
         self._mock_messages = []
@@ -30,6 +33,7 @@ class CosmosDBConnection:
                 description="Public chat room for everyone"
             )
         ]
+        self._mock_users = []
         
         # Only set dev_mode based on explicit environment variable
         self.dev_mode = os.getenv("DEV_MODE", "false").lower() == "true"
@@ -304,6 +308,200 @@ class CosmosDBConnection:
             return True
         except Exception as e:
             logging.error(f"Error deleting chat room: {e}")
+            return False
+
+    async def create_user(self, user: User) -> Optional[User]:
+        """Create a new user in the database."""
+        if not user.id:
+            user.id = str(uuid.uuid4())
+            
+        if self.dev_mode:
+            # Check if username or email already exists
+            for existing_user in self._mock_users:
+                if existing_user.username.lower() == user.username.lower():
+                    logging.warning(f"Username {user.username} already exists")
+                    return None
+                if existing_user.email.lower() == user.email.lower():
+                    logging.warning(f"Email {user.email} already exists")
+                    return None
+            
+            self._mock_users.append(user)
+            return user
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error(f"Failed to get user container, user not saved: {user.id}")
+                return None
+                
+            # Check if username already exists
+            query = "SELECT * FROM c WHERE c.username = @username"
+            parameters = [{"name": "@username", "value": user.username}]
+            
+            exists = False
+            items = container.query_items(query=query, parameters=parameters)
+            
+            async for _ in items:
+                exists = True
+                break
+                
+            if exists:
+                logging.warning(f"Username {user.username} already exists")
+                return None
+                
+            # Check if email already exists
+            query = "SELECT * FROM c WHERE c.email = @email"
+            parameters = [{"name": "@email", "value": user.email}]
+            
+            exists = False
+            items = container.query_items(query=query, parameters=parameters)
+            
+            async for _ in items:
+                exists = True
+                break
+                
+            if exists:
+                logging.warning(f"Email {user.email} already exists")
+                return None
+                
+            # Create the user
+            user_dict = user.dict()
+            await container.create_item(body=user_dict)
+            logging.info(f"Created new user: {user.id} - {user.username}")
+            return user
+            
+        except Exception as e:
+            logging.error(f"Error creating user: {e}")
+            return None
+            
+    async def get_user_by_id(self, user_id: str) -> Optional[User]:
+        """Get a user by ID."""
+        if self.dev_mode:
+            for user in self._mock_users:
+                if user.id == user_id:
+                    return user
+            return None
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error(f"Failed to get user container for user {user_id}")
+                return None
+                
+            query = "SELECT * FROM c WHERE c.id = @userId"
+            parameters = [{"name": "@userId", "value": user_id}]
+            
+            items = container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=user_id
+            )
+            
+            async for item in items:
+                return User(**item)
+                
+            return None
+        except Exception as e:
+            logging.error(f"Error retrieving user {user_id}: {e}")
+            return None
+            
+    async def get_user_by_username(self, username: str) -> Optional[User]:
+        """Get a user by username."""
+        if self.dev_mode:
+            for user in self._mock_users:
+                if user.username.lower() == username.lower():
+                    return user
+            return None
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error(f"Failed to get user container for username {username}")
+                return None
+                
+            query = "SELECT * FROM c WHERE LOWER(c.username) = LOWER(@username)"
+            parameters = [{"name": "@username", "value": username}]
+            
+            items = container.query_items(query=query, parameters=parameters)
+            
+            async for item in items:
+                return User(**item)
+                
+            return None
+        except Exception as e:
+            logging.error(f"Error retrieving user by username {username}: {e}")
+            return None
+            
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Get a user by email."""
+        if self.dev_mode:
+            for user in self._mock_users:
+                if user.email.lower() == email.lower():
+                    return user
+            return None
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error(f"Failed to get user container for email {email}")
+                return None
+                
+            query = "SELECT * FROM c WHERE LOWER(c.email) = LOWER(@email)"
+            parameters = [{"name": "@email", "value": email}]
+            
+            items = container.query_items(query=query, parameters=parameters)
+            
+            async for item in items:
+                return User(**item)
+                
+            return None
+        except Exception as e:
+            logging.error(f"Error retrieving user by email {email}: {e}")
+            return None
+            
+    async def update_user_last_login(self, user_id: str) -> bool:
+        """Update user's last login timestamp."""
+        if self.dev_mode:
+            for user in self._mock_users:
+                if user.id == user_id:
+                    user.last_login = datetime.utcnow().isoformat()
+                    return True
+            return False
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error(f"Failed to get user container for updating last login for user {user_id}")
+                return False
+                
+            # Get the user first
+            query = "SELECT * FROM c WHERE c.id = @userId"
+            parameters = [{"name": "@userId", "value": user_id}]
+            
+            items = container.query_items(
+                query=query,
+                parameters=parameters,
+                partition_key=user_id
+            )
+            
+            user_item = None
+            async for item in items:
+                user_item = item
+                break
+                
+            if not user_item:
+                logging.warning(f"User with ID {user_id} not found for last login update")
+                return False
+                
+            # Update the last login timestamp
+            user_item['last_login'] = datetime.utcnow().isoformat()
+            
+            # Update the item in Cosmos DB
+            await container.replace_item(item=user_item['id'], body=user_item)
+            logging.info(f"Updated last login for user: {user_id}")
+            return True
+        except Exception as e:
+            logging.error(f"Error updating last login for user {user_id}: {e}")
             return False
 
     async def close(self):

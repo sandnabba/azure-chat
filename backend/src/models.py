@@ -6,6 +6,10 @@ class User(BaseModel):
     """User model for the chat application."""
     id: Optional[str] = None
     username: str
+    email: str
+    password: str  # This will store the hashed password
+    created_at: Optional[str] = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    last_login: Optional[str] = None
     
 class Attachment(BaseModel):
     """Attachment model for chat messages."""
