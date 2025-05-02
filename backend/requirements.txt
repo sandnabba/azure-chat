@@ -1,0 +1,14 @@
+fastapi==0.104.0
+uvicorn==0.23.2
+pydantic==2.4.2
+python-dotenv==1.0.0
+azure-cosmos==4.5.1
+azure-functions==1.17.0
+python-jose==3.3.0
+gunicorn
+# WebSocket support
+websockets>=10.4
+# HTTP client for async requests
+aiohttp>=3.8.5
+azure-storage-blob>=12.14.1
+python-multipart>=0.0.7 # For handling form data (file uploads)
