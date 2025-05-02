@@ -1,0 +1,14 @@
+# Example minimal variables for Azure infrastructure
+
+# ===========================
+# Required variables (set these for all environments)
+# ===========================
+# subscription_id      = "your-subscription-id"
+# identifier           = "myname"
+
+# Container Registry Configuration
+# container_registry_login_server   = "your-registry.azurecr.io"
+# container_registry_admin_username = "your-registry-username"
+# container_registry_admin_password = "your-registry-password"
+
+# Optional:
