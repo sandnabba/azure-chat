@@ -35,10 +35,11 @@ run:
 
 dev:
 	docker build -t $(IMAGE_NAME)-dev -f Dockerfile.dev .
+	mkdir -p $(PWD)/node_modules
 	docker run --rm -it \
 	  -p 5173:5173 \
 	  -v $(PWD):/app \
-	  -v /app/node_modules \
+	  -v $(PWD)/node_modules:/app/node_modules \
 	  --name $(DEV_CONTAINER_NAME) \
 	  -e VITE_API_URL=http://localhost:8000 \
 	  $(IMAGE_NAME)-dev
