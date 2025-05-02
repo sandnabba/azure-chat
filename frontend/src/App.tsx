@@ -11,6 +11,9 @@ const AppContent = () => {
   const [username, setUsername] = useState<string | null>(
     localStorage.getItem('chatUsername')
   );
+  const [userId, setUserId] = useState<string | null>(
+    localStorage.getItem('chatUserId')
+  );
   const [selectedRoom, setSelectedRoom] = useState<string>('general');
   const [showVersionInfo, setShowVersionInfo] = useState(false);
   const { isConnected } = useChat();
@@ -19,14 +22,22 @@ const AppContent = () => {
   const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
   useEffect(() => {
-    if (username) {
+    if (username && userId) {
       localStorage.setItem('chatUsername', username);
+      localStorage.setItem('chatUserId', userId);
     }
-  }, [username]);
+  }, [username, userId]);
+
+  const handleUserAuthenticated = (username: string, userId: string) => {
+    setUsername(username);
+    setUserId(userId);
+  };
 
   const handleLogout = () => {
     localStorage.removeItem('chatUsername');
+    localStorage.removeItem('chatUserId');
     setUsername(null);
+    setUserId(null);
   };
 
   const toggleVersionInfo = () => {
@@ -41,7 +52,7 @@ const AppContent = () => {
           {username && (
             <div className="user-controls">
               <span>Signed in as: {username}</span>
-              <span className="user-id">(ID: {username})</span>
+              {userId && <span className="user-id">(ID: {userId.substring(0, 8)}...)</span>}
               <button onClick={handleLogout}>Logout</button>
             </div>
           )}
@@ -55,16 +66,16 @@ const AppContent = () => {
       </header>
 
       <div className="app-body">
-        {username ? (
+        {username && userId ? (
           <>
             <Sidebar selectedRoom={selectedRoom} onSelectRoom={setSelectedRoom} />
             <main>
-              <ChatRoom username={username} room={selectedRoom} />
+              <ChatRoom username={username} userId={userId} room={selectedRoom} />
             </main>
           </>
         ) : (
           <div className="login-container">
-            <UsernameForm onSelectUsername={setUsername} />
+            <UsernameForm onSelectUsername={handleUserAuthenticated} />
           </div>
         )}
       </div>

@@ -2,8 +2,13 @@ FROM node:20-slim
 
 WORKDIR /app
 
+# We'll use the mounted node_modules from the host
+# for development to ensure VSCode can access them
 COPY package.json package-lock*.json ./
-RUN npm install
+
+# Install dependencies only if node_modules is empty
+# This enables first-time setup while also supporting the mounted volume
+RUN [ "bash", "-c", "if [ ! -d 'node_modules' ] || [ -z \"$(ls -A node_modules 2>/dev/null)\" ]; then npm install; fi" ]
 
 # Copy the environment files first
 COPY .env.* ./

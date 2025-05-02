@@ -4,10 +4,11 @@ import './ChatRoom.css';
 
 interface ChatRoomProps {
   username: string;
+  userId: string;
   room: string;
 }
 
-const ChatRoom = ({ username, room }: ChatRoomProps) => {
+const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
   const { messages, sendMessage, connect, disconnect, isConnected, switchRoom, currentRoomId } = useChat();
   const [messageInput, setMessageInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -21,9 +22,9 @@ const ChatRoom = ({ username, room }: ChatRoomProps) => {
     const connectToChat = async () => {
       try {
         if (!isConnected && !initialConnectionMade.current) {
-          console.log(`Initial connection as ${username}`);
+          console.log(`Initial connection as ${username} (${userId})`);
           initialConnectionMade.current = true;
-          await connect(username);
+          await connect(userId, username);
         }
       } catch (error) {
         console.error('Failed to connect:', error);
@@ -39,7 +40,7 @@ const ChatRoom = ({ username, room }: ChatRoomProps) => {
         disconnect();
       }
     };
-  }, [username, connect, disconnect, isConnected]);
+  }, [username, userId, connect, disconnect, isConnected]);
 
   // Handle room changes efficiently
   useEffect(() => {
@@ -88,7 +89,7 @@ const ChatRoom = ({ username, room }: ChatRoomProps) => {
     e.preventDefault();
     if (messageInput.trim() || selectedFile) {
       try {
-        await sendMessage(messageInput.trim(), username, selectedFile);
+        await sendMessage(messageInput.trim(), selectedFile, userId);
         setMessageInput('');
         clearAttachment();
       } catch (error) {
@@ -124,10 +125,10 @@ const ChatRoom = ({ username, room }: ChatRoomProps) => {
             filteredMessages.map((message) => (
               <div 
                 key={message.id} 
-                className={`message ${message.senderId === username ? 'own-message' : ''}`}
+                className={`message ${message.senderId === userId ? 'own-message' : ''}`}
               >
                 <div className="message-header">
-                  <span className="sender">{message.senderId === username ? 'You' : message.senderName}</span>
+                  <span className="sender">{message.senderId === userId ? 'You' : message.senderName}</span>
                   <span className="time">
                     {new Date(message.timestamp).toLocaleTimeString()}
                   </span>

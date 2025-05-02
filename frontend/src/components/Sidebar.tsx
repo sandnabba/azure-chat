@@ -150,7 +150,6 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
         fetchRooms();
       } else {
         console.log('Channel created successfully on server');
-        const savedChannel = await response.json();
         
         // Refresh the channel list to ensure server and client are in sync
         // This is especially important if the server modified any properties
