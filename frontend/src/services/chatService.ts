@@ -13,6 +13,7 @@ export class ChatService {
   private reconnectTimeoutId: number | null = null;
   private currentRoomId: string = 'general';
   private currentUsername: string = '';
+  private currentUserId: string = '';
   private roomChangeInProgress = false;
 
   constructor(baseUrl: string = import.meta.env.VITE_API_URL || 'http://localhost:8000') {
@@ -30,11 +31,12 @@ export class ChatService {
     console.log('WebSocket Base URL:', this.wsBaseUrl);
   }
 
-  public async startConnection(username: string, roomId: string = 'general'): Promise<void> {
+  public async startConnection(userId: string, username: string, roomId: string = 'general'): Promise<void> {
     // Reset reconnect attempts on new connection
     this.reconnectAttempts = 0;
     
     // Store current user and room
+    this.currentUserId = userId;
     this.currentUsername = username;
     this.currentRoomId = roomId;
 
@@ -42,15 +44,15 @@ export class ChatService {
       // Close any existing connection first
       await this.cleanupExistingConnection();
 
-      // Create WebSocket URL with the specified room
-      const wsUrl = `${this.wsBaseUrl}/ws/${roomId}/${username}`;
-      console.log('Connecting to WebSocket at:', wsUrl);
+      // Create WebSocket URL with the specified room and userId
+      const wsUrl = `${this.wsBaseUrl}/ws/${roomId}/${userId}`;
+      console.log(`Connecting to WebSocket at: ${wsUrl} (Username: ${username})`);
 
       this.connection = new WebSocket(wsUrl);
 
       // Set up WebSocket event handlers with better error handling
       this.connection.onopen = this.handleOpen.bind(this);
-      this.connection.onclose = this.handleClose.bind(this, username);
+      this.connection.onclose = this.handleClose.bind(this, userId);
       this.connection.onerror = this.handleError.bind(this);
       this.connection.onmessage = this.handleMessage.bind(this);
 
@@ -112,7 +114,7 @@ export class ChatService {
       
       // With the current backend implementation, we need to reconnect to a new WebSocket
       // for each room to ensure messages are properly routed
-      await this.startConnection(this.currentUsername, roomId);
+      await this.startConnection(this.currentUserId, this.currentUsername, roomId);
       
       console.log(`Successfully connected to new room: ${roomId}`);
     } catch (error) {
@@ -135,12 +137,12 @@ export class ChatService {
     this.reconnectAttempts = 0;
   }
 
-  private handleClose(username: string, event: CloseEvent) {
+  private handleClose(userId: string, event: CloseEvent) {
     console.log(`Disconnected from WebSocket service. Code: ${event.code} Reason: ${event.reason}`);
 
     // Only try to reconnect on abnormal closure and if we haven't exceeded max attempts
     if (event.code === 1006 && this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.scheduleReconnect(username);
+      this.scheduleReconnect(userId);
     }
   }
 
@@ -199,7 +201,7 @@ export class ChatService {
     }
   }
 
-  private scheduleReconnect(username: string): void {
+  private scheduleReconnect(userId: string): void {
     this.reconnectAttempts++;
     const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
 
@@ -208,7 +210,7 @@ export class ChatService {
     this.reconnectTimeoutId = window.setTimeout(async () => {
       console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
       try {
-        await this.startConnection(username, this.currentRoomId);
+        await this.startConnection(userId, this.currentUsername, this.currentRoomId);
         console.log('Reconnection successful!');
       } catch (error) {
         console.error('Reconnection failed:', error);
@@ -267,7 +269,7 @@ export class ChatService {
       if (!this.connection || this.connection.readyState !== WebSocket.OPEN) {
         console.log("WebSocket connection not established, attempting to reconnect");
         try {
-          await this.startConnection(senderName, this.currentRoomId);
+          await this.startConnection(this.currentUserId, senderName, this.currentRoomId);
           console.log("Successfully established WebSocket connection before sending message");
         } catch (wsError) {
           console.warn("Failed to establish WebSocket connection, attempting to send message anyway", wsError);

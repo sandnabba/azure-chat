@@ -1,15 +1,14 @@
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
 import { ChatMessage } from '../types/chat';
-import { v4 as uuidv4 } from 'uuid';
 import chatService from '../services/chatService';
 
 type ChatContextType = {
   messages: ChatMessage[];
-  sendMessage: (content: string, username: string, file?: File | null) => Promise<void>;
+  sendMessage: (content: string, file?: File | null, userId?: string) => Promise<void>;
   activeUsers: string[];
   addActiveUser: (username: string) => void;
   removeActiveUser: (username: string) => void;
-  connect: (username: string) => Promise<void>;
+  connect: (userId: string, username: string) => Promise<void>;
   disconnect: () => Promise<void>;
   isConnected: boolean;
   currentRoomId: string;
@@ -27,6 +26,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   
   const [currentRoomId, setCurrentRoomId] = useState<string>('general');
   const currentUsername = useRef<string>('');
+  const currentUserId = useRef<string>('');
   const switchingRoom = useRef(false);
   const connectionInProgress = useRef(false);
   
@@ -91,7 +91,7 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [currentRoomId, loadRoomHistory, messagesByRoom]);
 
-  const connect = useCallback(async (username: string) => {
+  const connect = useCallback(async (userId: string, username: string) => {
     if (connectionInProgress.current || isConnected) {
       console.log('Connection already in progress or already connected');
       return;
@@ -101,10 +101,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       connectionInProgress.current = true;
       console.log(`Connecting as user: ${username}, target room: ${currentRoomId}`);
       
-      // Store the username in the ref for later use
+      // Store the username and userId in the refs for later use
       currentUsername.current = username;
+      currentUserId.current = userId;
       
-      await chatService.startConnection(username, currentRoomId);
+      await chatService.startConnection(userId, username, currentRoomId);
       setIsConnected(true);
       addActiveUser(username);
 
@@ -163,34 +164,34 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [isConnected]);
 
-  const sendMessage = useCallback(async (content: string, username: string, file?: File | null) => {
+  const sendMessage = useCallback(async (content: string, file?: File | null, userId?: string) => {
     if (!content && !file) {
       console.warn('Attempted to send an empty message without a file.');
       return;
     }
 
-    // Always use the stored username ref for consistency
-    const userId = currentUsername.current;
+    // Always use the stored username and userId refs for consistency
+    const senderId = userId || currentUserId.current;
+    const senderName = currentUsername.current;
     
-    if (!userId) {
-        console.error('Cannot send message: No user ID available. Try reconnecting.');
+    if (!senderId || !senderName) {
+        console.error('Cannot send message: No user ID or username available. Try reconnecting.');
         return;
     }
 
     try {
       if (isConnected) {
-        console.log(`Sending message/file to room ${currentRoomId} as user ${userId}...`);
+        console.log(`Sending message/file to room ${currentRoomId} as user ${senderName}...`);
         
-        // IMPORTANT: Use the same user ID for both senderId and senderName
-        // to ensure backend validation passes - they must match exactly
+        // IMPORTANT: Use the same senderId and senderName for backend validation
         await chatService.sendMessage(
           content, 
-          userId,  // senderId - must match the user_id header
-          userId,  // senderName - keep consistent with senderId
+          senderId,  // senderId - must match the user_id header
+          senderName,  // senderName - keep consistent with senderId
           file
         );
         
-        console.log(`Message/file sent via HTTP POST as user ${userId}. Waiting for WebSocket broadcast.`);
+        console.log(`Message/file sent via HTTP POST as user ${senderName}. Waiting for WebSocket broadcast.`);
         
       } else {
         console.error('Cannot send message: Not connected.');
