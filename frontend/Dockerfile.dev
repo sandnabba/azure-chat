@@ -1,0 +1,27 @@
+FROM node:20-slim
+
+WORKDIR /app
+
+COPY package.json package-lock*.json ./
+RUN npm install
+
+# Copy the environment files first
+COPY .env.* ./
+# Then copy the rest of the files
+COPY . .
+
+# Generate build info for development environment
+RUN echo "window.BUILD_INFO = {" > src/build-info.js
+RUN echo "  buildDate: '$(date -u +'%Y-%m-%dT%H:%M:%SZ')'," >> src/build-info.js
+RUN echo "  version: '1.0.0-dev'," >> src/build-info.js
+RUN echo "  environment: 'development'" >> src/build-info.js
+RUN echo "};" >> src/build-info.js
+
+# Create a static build-info.json file that can be fetched via HTTP
+RUN mkdir -p public
+RUN echo "{\"build_date\": \"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\", \"version\": \"1.0.0-dev\", \"environment\": \"development\"}" > public/build-info.json
+
+EXPOSE 5173
+
+# Use --host 0.0.0.0 to make the dev server accessible outside the container
+CMD ["npm", "run", "dev", "--", "--host", "0.0.0.0"]

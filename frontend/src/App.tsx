@@ -1,0 +1,93 @@
+import { useState, useEffect } from 'react';
+import './App.css';
+import ChatRoom from './components/ChatRoom';
+import UsernameForm from './components/UsernameForm';
+import Sidebar from './components/Sidebar';
+import BuildInfo from './components/BuildInfo';
+import { ChatProvider, useChat } from './contexts/ChatContext';
+
+// Main App content component that can use ChatContext
+const AppContent = () => {
+  const [username, setUsername] = useState<string | null>(
+    localStorage.getItem('chatUsername')
+  );
+  const [selectedRoom, setSelectedRoom] = useState<string>('general');
+  const [showVersionInfo, setShowVersionInfo] = useState(false);
+  const { isConnected } = useChat();
+
+  // Get API URL from environment or use default
+  const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+  useEffect(() => {
+    if (username) {
+      localStorage.setItem('chatUsername', username);
+    }
+  }, [username]);
+
+  const handleLogout = () => {
+    localStorage.removeItem('chatUsername');
+    setUsername(null);
+  };
+
+  const toggleVersionInfo = () => {
+    setShowVersionInfo(prev => !prev);
+  };
+
+  return (
+    <div className="app-container">
+      <header className="app-header">
+        <h1>Azure Chat</h1>
+        <div className="header-controls">
+          {username && (
+            <div className="user-controls">
+              <span>Signed in as: {username}</span>
+              <span className="user-id">(ID: {username})</span>
+              <button onClick={handleLogout}>Logout</button>
+            </div>
+          )}
+          <button className="version-button" onClick={toggleVersionInfo}>
+            Version Info
+          </button>
+          <button className={`connection-button ${isConnected ? 'connected' : 'disconnected'}`}>
+            {isConnected ? '🟢 Connected' : '🔴 Disconnected'}
+          </button>
+        </div>
+      </header>
+
+      <div className="app-body">
+        {username ? (
+          <>
+            <Sidebar selectedRoom={selectedRoom} onSelectRoom={setSelectedRoom} />
+            <main>
+              <ChatRoom username={username} room={selectedRoom} />
+            </main>
+          </>
+        ) : (
+          <div className="login-container">
+            <UsernameForm onSelectUsername={setUsername} />
+          </div>
+        )}
+      </div>
+      
+      {/* Version Info Modal */}
+      {showVersionInfo && (
+        <BuildInfo 
+          backendUrl={backendUrl} 
+          isOpen={showVersionInfo} 
+          onClose={() => setShowVersionInfo(false)} 
+        />
+      )}
+    </div>
+  );
+};
+
+// App wrapper that provides the ChatContext
+function App() {
+  return (
+    <ChatProvider>
+      <AppContent />
+    </ChatProvider>
+  );
+}
+
+export default App;

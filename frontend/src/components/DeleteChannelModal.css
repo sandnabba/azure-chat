@@ -1,0 +1,23 @@
+/* Import styling from AddChannelModal to maintain consistency */
+@import './AddChannelModal.css';
+
+/* Add additional styling specific to delete modal */
+.delete-confirmation {
+  margin-bottom: 20px;
+}
+
+.delete-warning {
+  color: #e74c3c;
+  font-size: 0.9rem;
+  margin-top: 10px;
+}
+
+.delete-button {
+  background-color: #e74c3c !important;
+  color: white;
+  border-color: #c0392b !important;
+}
+
+.delete-button:hover {
+  background-color: #c0392b !important;
+}

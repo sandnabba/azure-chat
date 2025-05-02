@@ -1,0 +1,30 @@
+# Node.js specific .gitignore file for the frontend directory
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependency directories
+node_modules/
+
+# Build output
+build/
+dist/
+public/build-info.json
+
+# Environment files
+.env*
+
+# IDE specific files
+.vscode/
+.DS_Store
+
+# Temporary files
+*.tmp
+*.swp
+
+# Coverage reports
+coverage/
