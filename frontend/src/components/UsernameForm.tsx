@@ -20,6 +20,7 @@ const UsernameForm = ({ onSelectUsername }: UsernameFormProps) => {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [registrationSuccessful, setRegistrationSuccessful] = useState(false);
   
   // Get API URL from environment variable
   const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
@@ -115,8 +116,10 @@ const UsernameForm = ({ onSelectUsername }: UsernameFormProps) => {
         throw new Error(errorData.detail || 'Registration failed');
       }
       
-      const userData: AuthUser = await response.json();
-      onSelectUsername(userData.username, userData.id);
+      // User registration successful, but we don't need the response data
+      await response.json();
+      setRegistrationSuccessful(true);
+      // Don't automatically log in the user now, they need to verify email first
     } catch (err: any) {
       setError(err.message || 'Failed to register. Please try again.');
     } finally {
@@ -172,100 +175,123 @@ const UsernameForm = ({ onSelectUsername }: UsernameFormProps) => {
       <div className="auth-tabs">
         <button 
           className={`auth-tab ${isLogin ? 'active' : ''}`} 
-          onClick={() => setIsLogin(true)}
+          onClick={() => {
+            setIsLogin(true);
+            setRegistrationSuccessful(false);
+            setError('');
+          }}
           type="button"
         >
           Login
         </button>
         <button 
           className={`auth-tab ${!isLogin ? 'active' : ''}`} 
-          onClick={() => setIsLogin(false)}
+          onClick={() => {
+            setIsLogin(false);
+            setError('');
+          }}
           type="button"
         >
           Register
         </button>
       </div>
       
-      <form onSubmit={handleSubmit} className="username-form">
-        {!isLogin && (
+      {registrationSuccessful ? (
+        <div className="verification-message">
+          <p>Registration successful! Please check your email to verify your account before logging in.</p>
+          <p className="verification-note">If you don't see the email, check your spam folder.</p>
+          <button 
+            className="auth-button" 
+            onClick={() => {
+              setIsLogin(true);
+              setRegistrationSuccessful(false);
+            }}
+          >
+            Go to Login
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="username-form">
+          {!isLogin && (
+            <div className="input-group">
+              <label htmlFor="username">Username</label>
+              <input
+                id="username"
+                type="text"
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setError('');
+                }}
+                placeholder="Choose a username"
+                disabled={isLoading}
+              />
+            </div>
+          )}
+          
           <div className="input-group">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="email">Email</label>
             <input
-              id="username"
-              type="text"
-              value={username}
+              id="email"
+              type="email"
+              value={email}
               onChange={(e) => {
-                setUsername(e.target.value);
+                setEmail(e.target.value);
                 setError('');
               }}
-              placeholder="Choose a username"
+              placeholder="Your email address"
               disabled={isLoading}
+              autoFocus={isLogin}
             />
           </div>
-        )}
-        
-        <div className="input-group">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => {
-              setEmail(e.target.value);
-              setError('');
-            }}
-            placeholder="Your email address"
-            disabled={isLoading}
-            autoFocus={isLogin}
-          />
-        </div>
-        
-        <div className="input-group">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => {
-              setPassword(e.target.value);
-              setError('');
-            }}
-            placeholder="Your password"
-            disabled={isLoading}
-          />
-        </div>
-        
-        {!isLogin && (
+          
           <div className="input-group">
-            <label htmlFor="confirmPassword">Confirm Password</label>
+            <label htmlFor="password">Password</label>
             <input
-              id="confirmPassword"
+              id="password"
               type="password"
-              value={confirmPassword}
+              value={password}
               onChange={(e) => {
-                setConfirmPassword(e.target.value);
+                setPassword(e.target.value);
                 setError('');
               }}
-              placeholder="Confirm your password"
+              placeholder="Your password"
               disabled={isLoading}
             />
           </div>
-        )}
-        
-        {error && <p className="error">{error}</p>}
-        
-        <button 
-          type="submit" 
-          disabled={isLoading || (isLogin ? !email || !password : !username || !email || !password || !confirmPassword)}
-          className="auth-button"
-        >
-          {isLoading 
-            ? 'Please wait...' 
-            : isLogin 
-              ? 'Log In' 
-              : 'Create Account'}
-        </button>
-      </form>
+          
+          {!isLogin && (
+            <div className="input-group">
+              <label htmlFor="confirmPassword">Confirm Password</label>
+              <input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  setError('');
+                }}
+                placeholder="Confirm your password"
+                disabled={isLoading}
+              />
+            </div>
+          )}
+          
+          {error && <p className="error">{error}</p>}
+          
+          <button 
+            type="submit" 
+            disabled={isLoading || (isLogin ? !email || !password : !username || !email || !password || !confirmPassword)}
+            className="auth-button"
+          >
+            {isLoading 
+              ? 'Please wait...' 
+              : isLogin 
+                ? 'Log In' 
+                : 'Create Account'}
+          </button>
+        </form>
+      )}
     </div>
   );
 };

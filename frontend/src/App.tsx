@@ -4,10 +4,9 @@ import ChatRoom from './components/ChatRoom';
 import UsernameForm from './components/UsernameForm';
 import Sidebar from './components/Sidebar';
 import BuildInfo from './components/BuildInfo';
-import { ChatProvider, useChat } from './contexts/ChatContext';
+import { useChat } from './contexts/ChatContext';
 
-// Main App content component that can use ChatContext
-const AppContent = () => {
+function App() {
   const [username, setUsername] = useState<string | null>(
     localStorage.getItem('chatUsername')
   );
@@ -89,15 +88,6 @@ const AppContent = () => {
         />
       )}
     </div>
-  );
-};
-
-// App wrapper that provides the ChatContext
-function App() {
-  return (
-    <ChatProvider>
-      <AppContent />
-    </ChatProvider>
   );
 }
 

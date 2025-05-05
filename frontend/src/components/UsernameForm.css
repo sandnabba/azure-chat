@@ -141,3 +141,18 @@
   border-radius: 4px;
   border-left: 3px solid #e74c3c;
 }
+
+.verification-message {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background-color: #d1ecf1;
+  border-radius: 6px;
+  color: #0c5460;
+  text-align: center;
+}
+
+.verification-note {
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+  color: #6c757d;
+}

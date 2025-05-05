@@ -1,4 +1,5 @@
 # Node.js specific .gitignore file for the frontend directory
+src/build-info.js
 
 # Logs
 logs
@@ -9,6 +10,7 @@ yarn-error.log*
 
 # Dependency directories
 node_modules/
+package-lock.json
 
 # Build output
 build/

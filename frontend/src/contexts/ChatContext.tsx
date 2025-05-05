@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef, startTransition } from 'react';
 import { ChatMessage } from '../types/chat';
 import chatService from '../services/chatService';
 
@@ -40,16 +40,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       
       console.log(`Fetched ${history.length} messages for room ${roomId}`);
       
-      setMessagesByRoom(prev => ({
-        ...prev,
-        [roomId]: history
-      }));
+      startTransition(() => {
+        setMessagesByRoom(prev => ({
+          ...prev,
+          [roomId]: history
+        }));
+      });
     } catch (error) {
       console.error(`Failed to fetch chat history for room ${roomId}:`, error);
-      setMessagesByRoom(prev => ({
-        ...prev,
-        [roomId]: []
-      }));
+      startTransition(() => {
+        setMessagesByRoom(prev => ({
+          ...prev,
+          [roomId]: []
+        }));
+      });
     }
   }, []);
 
@@ -75,7 +79,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       switchingRoom.current = true;
       console.log(`Switching from room ${currentRoomId} to ${roomId}`);
       
-      setCurrentRoomId(roomId);
+      startTransition(() => {
+        setCurrentRoomId(roomId);
+      });
       
       await chatService.updateCurrentRoom(roomId);
       
@@ -106,8 +112,11 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
       currentUserId.current = userId;
       
       await chatService.startConnection(userId, username, currentRoomId);
-      setIsConnected(true);
-      addActiveUser(username);
+      
+      startTransition(() => {
+        setIsConnected(true);
+        addActiveUser(username);
+      });
 
       if (!messagesByRoom[currentRoomId] || messagesByRoom[currentRoomId].length === 0) {
         await loadRoomHistory(currentRoomId);
@@ -117,36 +126,44 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
         chatService.onReceiveMessage((message) => {
           console.log(`Received message for room ${message.chatId}:`, message);
           
-          setMessagesByRoom(prev => {
-            const roomMessages = prev[message.chatId] || [];
-            
-            if (roomMessages.some(m => m.id === message.id)) {
-              console.log(`Message with ID ${message.id} already exists in room ${message.chatId}, ignoring`);
-              return prev;
-            }
-            
-            const updatedRoomMessages = [...roomMessages, message];
-            
-            return {
-              ...prev,
-              [message.chatId]: updatedRoomMessages
-            };
+          startTransition(() => {
+            setMessagesByRoom(prev => {
+              const roomMessages = prev[message.chatId] || [];
+              
+              if (roomMessages.some(m => m.id === message.id)) {
+                console.log(`Message with ID ${message.id} already exists in room ${message.chatId}, ignoring`);
+                return prev;
+              }
+              
+              const updatedRoomMessages = [...roomMessages, message];
+              
+              return {
+                ...prev,
+                [message.chatId]: updatedRoomMessages
+              };
+            });
           });
         });
 
         chatService.onUserJoined((username) => {
-          addActiveUser(username);
+          startTransition(() => {
+            addActiveUser(username);
+          });
         });
 
         chatService.onUserLeft((username) => {
-          removeActiveUser(username);
+          startTransition(() => {
+            removeActiveUser(username);
+          });
         });
 
         eventHandlersRegistered.current = true;
       }
     } catch (error) {
       console.error('Failed to connect to chat hub:', error);
-      setIsConnected(false);
+      startTransition(() => {
+        setIsConnected(false);
+      });
     } finally {
       connectionInProgress.current = false;
     }
@@ -157,7 +174,9 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
     
     try {
       await chatService.stopConnection();
-      setIsConnected(false);
+      startTransition(() => {
+        setIsConnected(false);
+      });
       eventHandlersRegistered.current = false;
     } catch (error) {
       console.error('Error disconnecting from chat hub:', error);
@@ -202,16 +221,20 @@ export const ChatProvider = ({ children }: { children: ReactNode }) => {
   }, [isConnected, currentRoomId]);
 
   const addActiveUser = useCallback((username: string) => {
-    setActiveUsers((prev) => {
-      if (!prev.includes(username)) {
-        return [...prev, username];
-      }
-      return prev;
+    startTransition(() => {
+      setActiveUsers((prev) => {
+        if (!prev.includes(username)) {
+          return [...prev, username];
+        }
+        return prev;
+      });
     });
   }, []);
 
   const removeActiveUser = useCallback((username: string) => {
-    setActiveUsers((prev) => prev.filter((user) => user !== username));
+    startTransition(() => {
+      setActiveUsers((prev) => prev.filter((user) => user !== username));
+    });
   }, []);
 
   const loggedRoomsRef = useRef<Record<string, boolean>>({});
