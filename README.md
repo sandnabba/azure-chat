@@ -11,12 +11,17 @@ A simple, real-time chat service built on Azure cloud infrastructure.
 ## Overview
 
 The main purpose of this project is to serve as a learning and exploration platform for Azure cloud services such as:
+
 * Cosmos DB (No-SQL database)
-* Blob storage
+  * CosmosDB change feed
+* Storage Service
+  * Blob storage
+  * Static website (Planned)
 * App Service
-* Event Grid (Planned)
-* SignalR (Planned)
-* Functions (Planned)
+* Function Apps
+* Communication service
+* Service Bus (Planned)
+
 
 ## Structure
 
@@ -26,6 +31,7 @@ The main purpose of this project is to serve as a learning and exploration platf
 | `/docs`      | Project documentation                     |
 | `/frontend`  | Node.js/Vite TypeScript frontend           |
 | `/infrastructure` | Terraform base + Terraform module for Azure services |
+| `/welcome_email_function` | Azure Function for sending welcome emails |
 
 ## Getting Started
 
@@ -55,9 +61,6 @@ This project does not cover Docker or basic container development. If you are ne
 ## To-Do
 
 * Investigate SignalR service.
-* Add email support.
-* Add proper user registration (register email + username) - Persistent user database.
-  * Here is where email sending comes in - User email confirmation.
 * Enable user-to-user messaging.
 * Provide clear "Getting Started" instructions:
   * Define `local.env` and `terraform.tfvars`.
