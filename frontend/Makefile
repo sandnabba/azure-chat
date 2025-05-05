@@ -15,7 +15,7 @@ DEV_CONTAINER_NAME=azure-chat-frontend-dev-live
 PORT?=80
 FRONTEND_APP_NAME?=chat-web-$(IDENTIFIER)
 
-.PHONY: build push run shell clean dev webapp-restart webapp-log webapp-http-log acr-login
+.PHONY: build push run shell clean dev install-deps webapp-restart webapp-log webapp-http-log acr-login
 
 acr-login:
 	@echo "Logging into Azure Container Registry..."
@@ -33,7 +33,11 @@ run:
 	  --name $(CONTAINER_NAME) \
 	  $(IMAGE_NAME)
 
-dev:
+install-deps:
+	@echo "Installing node dependencies locally..."
+	npm install
+
+dev: install-deps
 	docker build -t $(IMAGE_NAME)-dev -f Dockerfile.dev .
 	mkdir -p $(PWD)/node_modules
 	docker run --rm -it \
