@@ -64,19 +64,6 @@ variable "message_ttl_seconds" {
   default     = 2592000 # 30 days
 }
 
-# SignalR Configuration
-variable "signalr_sku" {
-  description = "The SKU of the SignalR service"
-  type        = string
-  default     = "Free_F1"
-}
-
-variable "signalr_capacity" {
-  description = "The number of units of the SignalR service"
-  type        = number
-  default     = 1
-}
-
 # App Service Configuration
 variable "app_service_sku" {
   description = "The SKU name for the App Service Plan"
@@ -127,4 +114,18 @@ variable "additional_allowed_origins" {
   description = "Additional origins to allow for CORS"
   type        = list(string)
   default     = ["http://localhost:5173", "http://localhost:8000"]
+}
+
+# Communication Service Configuration
+variable "communication_service_name" {
+  description = "Name of the Azure Communication Service resource"
+  type        = string
+  default     = "azure-chat-comm"
+}
+
+# Email Service Configuration
+variable "email_service_name" {
+  description = "Name of the Azure Communication Email Service resource"
+  type        = string
+  default     = "azure-chat-email"
 }

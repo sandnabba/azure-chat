@@ -58,3 +58,12 @@ resource "azurerm_cosmosdb_sql_container" "rooms_container" {
   database_name       = azurerm_cosmosdb_sql_database.chat_database.name
   partition_key_paths = ["/id"]
 }
+
+# Cosmos DB SQL Container for Leases (used for Change Feed / Azure Functions)
+resource "azurerm_cosmosdb_sql_container" "leases_container" {
+  name                = "leases"
+  resource_group_name = var.resource_group_name
+  account_name        = azurerm_cosmosdb_account.chat_db.name
+  database_name       = azurerm_cosmosdb_sql_database.chat_database.name
+  partition_key_paths = ["/id"]
+}

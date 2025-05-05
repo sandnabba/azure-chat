@@ -6,14 +6,14 @@
 # --- Local Values ---
 locals {
   resource_group_name = "${var.identifier}-chat-rg"
-  vnet_name          = "${var.identifier}-chat-vnet"
+  vnet_name           = "${var.identifier}-chat-vnet"
 }
 
 # --- Resource Group ---
 resource "azurerm_resource_group" "rg" {
   name     = local.resource_group_name
   location = var.location
-  
+
   lifecycle {
     ignore_changes = [tags["Cost Center"]]
   }
