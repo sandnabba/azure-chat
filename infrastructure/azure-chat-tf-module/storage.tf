@@ -19,7 +19,14 @@ resource "azurerm_storage_account" "chat_storage" {
 resource "azurerm_storage_container" "public_files" {
   name                  = "public-files"
   storage_account_id    = azurerm_storage_account.chat_storage.id
-  container_access_type = "blob"  # Allows public read access for blobs
+  container_access_type = "blob" # Allows public read access for blobs
+}
+
+# Function packages container for Azure Functions deployments
+resource "azurerm_storage_container" "function_packages" {
+  name                  = "function-packages"
+  storage_account_id    = azurerm_storage_account.chat_storage.id
+  container_access_type = "private" # Private access for function packages
 }
 
 # Lifecycle policy for the public files (1-day retention)
