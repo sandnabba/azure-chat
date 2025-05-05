@@ -504,6 +504,87 @@ class CosmosDBConnection:
             logging.error(f"Error updating last login for user {user_id}: {e}")
             return False
 
+    async def verify_email(self, verification_token: str) -> dict:
+        """Verify a user's email using the verification token."""
+        result = {"success": False, "user_id": None, "email": None}
+        
+        if self.dev_mode:
+            # First check if user is already verified (token used)
+            for user in self._mock_users:
+                if (user.email_verification_token == verification_token and not user.email_confirmed):
+                    user.email_confirmed = True
+                    user.previous_token = verification_token  # Store for reference
+                    user.email_verification_token = None
+                    logging.info(f"Email verified for mock user: {user.id}")
+                    result["success"] = True
+                    result["user_id"] = user.id
+                    result["email"] = user.email
+                    return result
+                elif (user.email_verification_token is None and user.email_confirmed and 
+                      getattr(user, 'previous_token', None) == verification_token):
+                    # Token was already used, but verification was successful
+                    logging.info(f"Email already verified for mock user: {user.id}")
+                    result["success"] = True
+                    result["user_id"] = user.id
+                    result["email"] = user.email
+                    return result
+            logging.warning(f"No user found with verification token: {verification_token}")
+            return result
+            
+        try:
+            container = await self._get_container(self.user_container)
+            if not container:
+                logging.error("Failed to get user container for email verification")
+                return result
+                
+            # Find user with matching verification token
+            query = "SELECT * FROM c WHERE c.email_verification_token = @token"
+            parameters = [{"name": "@token", "value": verification_token}]
+            
+            items = container.query_items(query=query, parameters=parameters)
+            
+            user_item = None
+            async for item in items:
+                user_item = item
+                break
+                
+            if not user_item:
+                # Check if a user might have already been verified with this token
+                # This is less efficient but helps prevent false negatives
+                query = "SELECT * FROM c WHERE c.email_confirmed = true AND c.email_verification_token_history = @token"
+                parameters = [{"name": "@token", "value": verification_token}]
+                
+                items = container.query_items(query=query, parameters=parameters)
+                
+                async for item in items:
+                    logging.info(f"Email already verified for user: {item['id']}")
+                    result["success"] = True
+                    result["user_id"] = item['id']
+                    result["email"] = item['email']
+                    return result
+                    
+                logging.warning(f"No user found with verification token: {verification_token}")
+                return result
+                
+            # Store the previous token for reference
+            user_item['email_verification_token_history'] = verification_token
+                
+            # Update the user to confirm their email
+            user_item['email_confirmed'] = True
+            user_item['email_verification_token'] = None
+            
+            # Update the item in Cosmos DB
+            await container.replace_item(item=user_item['id'], body=user_item)
+            logging.info(f"Email verified for user: {user_item['id']}")
+            
+            result["success"] = True
+            result["user_id"] = user_item['id']
+            result["email"] = user_item['email']
+            return result
+        except Exception as e:
+            logging.error(f"Error verifying email: {e}")
+            return result
+
     async def close(self):
         """Close the AsyncCosmosClient instance to release resources."""
         if not self.dev_mode and self._client is not None:
