@@ -1,0 +1,11 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "CosmosDBConnectionString": "AccountEndpoint=https://your-cosmos-db-account.documents.azure.com:443/;AccountKey=your-cosmos-db-key;",
+    "ACSConnectionString": "endpoint=https://your-communication-service.communication.azure.com/;accesskey=your-acs-access-key",
+    "FRONTEND_URL": "http://localhost:3000",
+    "SenderEmail": "donotreply@yourdomain.com"
+  }
+}
