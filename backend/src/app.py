@@ -5,6 +5,7 @@ from datetime import datetime
 import os
 from typing import Dict, List, Optional
 import json
+import secrets
 from pydantic import BaseModel
 
 # Change absolute imports to relative imports for better container compatibility
@@ -283,13 +284,19 @@ async def register_user(user_data: UserRegister):
     if len(user_data.password) < 6:
         raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
     
+    # Generate verification token
+    verification_token = generate_verification_token()
+    
     # Create user object with hashed password
     user = User(
         id=str(uuid.uuid4()),
         username=user_data.username,
         email=user_data.email,
         password=hash_password(user_data.password),
-        created_at=datetime.utcnow().isoformat()
+        created_at=datetime.utcnow().isoformat(),
+        email_confirmed=False,
+        email_verification_token=verification_token,
+        email_verification_sent_at=datetime.utcnow().isoformat()
     )
     
     # Save user to database
@@ -299,6 +306,8 @@ async def register_user(user_data: UserRegister):
     
     # Add to active users
     active_users[created_user.id] = created_user
+    
+    # Email will be sent via the Azure Function triggered by Cosmos DB change feed
     
     # Return user data (excluding password)
     return UserResponse(
@@ -321,6 +330,10 @@ async def login_user(login_data: UserLogin):
     if not verify_password(login_data.password, user.password):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     
+    # Check if email is confirmed
+    if not getattr(user, 'email_confirmed', False):
+        raise HTTPException(status_code=403, detail="Email not verified. Please check your inbox for verification email.")
+    
     # Update last login timestamp
     await db.update_user_last_login(user.id)
     
@@ -335,6 +348,39 @@ async def login_user(login_data: UserLogin):
         created_at=user.created_at,
         last_login=user.last_login
     )
+
+@app.get("/api/auth/verify-email/{token}")
+async def verify_email(token: str):
+    """Verify a user's email using the provided verification token."""
+    if not token:
+        raise HTTPException(status_code=400, detail="Verification token is required")
+    
+    # Verify the token
+    verification_result = await db.verify_email(token)
+    
+    if not verification_result["success"]:
+        # Instead of immediately raising an error, check if the user exists but is already verified
+        user = None
+        # Try to find user first by checking all users - this is a bit inefficient but necessary
+        if db.dev_mode:
+            # In dev mode, check mock users
+            for mock_user in db._mock_users:
+                if mock_user.email_confirmed and mock_user.email_verification_token is None:
+                    # This user might have already been verified
+                    user = mock_user
+                    break
+        else:
+            # In production mode, we can't efficiently find a user whose token has already been used
+            # We'll have to rely on the verification_success flag only
+            pass
+            
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired verification token")
+    else:
+        # Log the successful account activation
+        print(f"INFO: Activating user account: {verification_result['user_id']} (email: {verification_result['email']})")
+    
+    return {"success": True, "message": "Email verified successfully"}
 
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
@@ -460,6 +506,10 @@ async def startup_event():
 async def shutdown_event():
     print("Shutting down application...")
     await db.close()
+
+def generate_verification_token() -> str:
+    """Generate a secure verification token for email verification."""
+    return secrets.token_urlsafe(32)
 
 if __name__ == "__main__":
     import uvicorn

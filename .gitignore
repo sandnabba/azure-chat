@@ -1,2 +1,3 @@
 # Local environment variables (contains personal identifiers and secrets)
 local.env
+.vscode

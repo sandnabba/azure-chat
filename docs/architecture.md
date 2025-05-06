@@ -15,46 +15,65 @@
 
 ## System Overview
 
-Azure Chat is a real-time chat application with a three-tier architecture leveraging Azure services:
+Azure Chat is a real-time chat application with a multi-tier architecture leveraging Azure services:
 
 1. **Frontend**: React/TypeScript SPA
 2. **Backend**: FastAPI Python API
 3. **Data Layer**: Cosmos DB (NoSQL) for messages/channels, Blob Storage for file attachments
+4. **Serverless Layer**: Azure Function triggered by Cosmos DB change feed for sending welcome verification emails
+5. **Communication Layer**: Azure Communication Service for email delivery
 
 ```
 ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
 │  Frontend   │━━━▶│  Backend    │━━━▶│  Database   │
 │  (React)    │◀━━━│  (FastAPI)  │◀━━━│(Cosmos DB)  │
 └─────────────┘    └─────────────┘    └─────────────┘
-                         │
-                         ▼
-                   ┌─────────────┐
-                   │  Storage    │
-                   │  (Blob)     │
-                   └─────────────┘
+                         │                    │
+                         ▼                    │
+                   ┌─────────────┐            │ Change Feed
+                   │  Storage    │            │ Trigger
+                   │  (Blob)     │            │
+                   └─────────────┘            ▼
+                                     ┌──────────────────────┐
+                                     │ Welcome Email        │
+                                     │ Function (Serverless)│
+                                     └──────────────────────┘
+                                               │
+                                               ▼
+                                     ┌──────────────────────┐
+                                     │ Azure Communication  │
+                                     │ Service (Email)      │
+                                     └──────────────────────┘
 ```
 
 ## Azure Data Services Integration
 
-### Cosmos DB
+### Core Services
+
+#### Cosmos DB
 - JSON document storage
 - Partition key design for efficient queries
 - SDK integration with Python/FastAPI
 
-### Blob Storage
+#### Blob Storage
 - File upload/download
 - URL generation for client access
 
-### Planned
-- Queue Storage for async processing
-- Functions for serverless event handling
-- Event Grid for notifications
+### Serverless & Communication Services
 
-## Communication Flow
+#### Azure Functions
+- Processes welcome emails triggered by Cosmos DB change feed
+- Handles asynchronous processing
 
-- **HTTP REST API**: CRUD operations
-- **WebSockets**: Real-time messaging
-- **Blob Storage**: File attachments
+#### Azure Communication Service
+- Email delivery for user verification
+- Integration with Azure Functions
+
+### Future Enhancements
+
+#### Queue Storage
+- Planned for additional async processing scenarios
+- Will enable message queueing for background tasks
 
 ## Component Details
 
@@ -69,6 +88,11 @@ Azure Chat is a real-time chat application with a three-tier architecture levera
 - **Channels**: Channel management
 - **WebSockets**: Real-time updates
 - **File Storage**: File handling
+
+### Serverless Functions
+- **Welcome Email Function**: Triggered by Cosmos DB change feed
+- Sends verification emails to newly registered users
+- Integrates with Azure Communication Service
 
 ## Database Design
 

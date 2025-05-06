@@ -10,7 +10,7 @@ module "azure_chat" {
   source = "./azure-chat-tf-module"
 
   # Project configuration
-  identifier       = "${var.identifier}-chat"
+  identifier          = "${var.identifier}-chat"
   location            = var.location
   resource_group_name = azurerm_resource_group.rg.name
 
@@ -56,7 +56,7 @@ output "frontend_app_name" {
 }
 
 output "frontend_app_url" {
-  description = "The URL of the frontend App Service" 
+  description = "The URL of the frontend App Service"
   value       = module.azure_chat.frontend_app_url
 }
 
@@ -68,11 +68,5 @@ output "cosmos_db_uri" {
 output "cosmos_db_primary_key" {
   description = "The primary key for the Cosmos DB account."
   value       = module.azure_chat.cosmos_db_primary_key
-  sensitive   = true
-}
-
-output "signalr_connection_string" {
-  description = "The primary connection string for the Azure SignalR Service from the azure_chat module."
-  value       = module.azure_chat.signalr_connection_string
   sensitive   = true
 }

@@ -9,14 +9,23 @@ Docker is the recommended method for both development and deployment.
 ### Development with Docker
 
 ```bash
-# Run the dev container with hot-reload
+# Run the dev container with hot-reload (installs node modules locally first)
 make dev
 ```
 
+This approach:
+- Installs node modules locally in your workspace (for VSCode linting and IntelliSense)
+- Mounts your local directory into the container for hot-reloading
+- Mounts the node_modules directory for better performance
+
 Or manually:
 ```bash
+# Install dependencies locally first
+npm install
+
+# Build and run the development container
 docker build -f Dockerfile.dev -t azure-chat-frontend-dev .
-docker run -p 5173:5173 azure-chat-frontend-dev
+docker run -p 5173:5173 -v $(pwd):/app -v $(pwd)/node_modules:/app/node_modules azure-chat-frontend-dev
 ```
 
 ### Production Build and Run
