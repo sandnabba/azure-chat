@@ -1,23 +1,30 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import './EmailVerification.css';
+import { getApiBaseUrl } from '../utils/apiUrls';
 
 const EmailVerification = () => {
-  const { token } = useParams();
+  const { token: urlParamToken } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [status, setStatus] = useState<'verifying' | 'success' | 'error'>('verifying');
   const [errorMessage, setErrorMessage] = useState('');
   // Use a ref to track if the verification has already been attempted
   const verificationAttempted = useRef(false);
   
-  // Get API URL from environment variable
-  const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  // Get API URL using the centralized utility
+  const apiBaseUrl = getApiBaseUrl();
 
   useEffect(() => {
     const verifyEmail = async () => {
       // Skip if verification was already attempted (prevents duplicate API calls in StrictMode)
       if (verificationAttempted.current) return;
       verificationAttempted.current = true;
+      
+      // Get token from either URL params (old method) or query string (new method)
+      const queryParams = new URLSearchParams(location.search);
+      const queryToken = queryParams.get('token');
+      const token = urlParamToken || queryToken;
       
       if (!token) {
         setStatus('error');
@@ -26,6 +33,7 @@ const EmailVerification = () => {
       }
 
       try {
+        // Make the API call to verify the email
         const response = await fetch(`${apiBaseUrl}/api/auth/verify-email/${token}`);
         
         if (response.ok) {
@@ -61,7 +69,7 @@ const EmailVerification = () => {
     };
 
     verifyEmail();
-  }, [token, apiBaseUrl]);
+  }, [urlParamToken, location.search, apiBaseUrl]);
 
   const goToLogin = () => {
     navigate('/');

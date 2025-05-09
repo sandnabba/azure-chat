@@ -14,7 +14,7 @@ interface VersionInfo {
   backendVersion?: string;
   backendTimestamp?: string;
   isLoading: boolean;
-  error?: string;
+  backendError?: string;
 }
 
 const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) => {
@@ -26,12 +26,15 @@ const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) =>
     const fetchVersionInfo = async () => {
       if (!isOpen) return;
       
-      setVersionInfo(prev => ({ ...prev, isLoading: true, error: undefined }));
+      setVersionInfo(prev => ({ ...prev, isLoading: true, backendError: undefined }));
       
       try {
-        // Try to load frontend build info
+        // Initialize with empty info objects
         const frontendInfo: Record<string, string> = {};
+        let backendInfo: Record<string, any> = {};
+        let backendError: string | undefined = undefined;
         
+        // Try to load frontend build info
         try {
           // First check if we have window.BUILD_INFO
           const windowBuildInfo = (window as any).BUILD_INFO;
@@ -49,26 +52,45 @@ const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) =>
           }
         } catch (e) {
           console.error('Error fetching frontend build info:', e);
+          // Still continue even if frontend info fetch fails
         }
         
-        // Fetch backend version info
-        const backendResponse = await fetch(`${backendUrl}/api/version`);
-        const backendData = await backendResponse.json();
+        // Try to fetch backend version info - wrapped in a separate try/catch
+        try {
+          const backendResponse = await fetch(`${backendUrl}/api/version`, {
+            // Add a timeout to prevent long waiting when backend is down
+            signal: AbortSignal.timeout(5000) // 5 second timeout
+          });
+          
+          if (backendResponse.ok) {
+            backendInfo = await backendResponse.json();
+          } else {
+            backendError = `Backend returned ${backendResponse.status} ${backendResponse.statusText}`;
+          }
+        } catch (e) {
+          console.error('Error fetching backend build info:', e);
+          backendError = e instanceof Error 
+            ? e.message 
+            : 'Failed to connect to backend service';
+        }
         
+        // Update state with all available information, even if partial
         setVersionInfo({
           frontendBuildDate: frontendInfo.buildDate,
           frontendVersion: frontendInfo.version,
-          backendBuildDate: backendData["Build date"],
-          backendVersion: backendData["Image version"],
-          backendTimestamp: backendData.timestamp,
+          backendBuildDate: backendInfo["Build date"],
+          backendVersion: backendInfo["Image version"],
+          backendTimestamp: backendInfo.timestamp,
+          backendError: backendError,
           isLoading: false
         });
       } catch (error) {
-        console.error('Error fetching version info:', error);
+        console.error('Unexpected error fetching version info:', error);
+        // Even with an overall error, try to display any frontend info we have
         setVersionInfo(prev => ({
           ...prev,
           isLoading: false,
-          error: error instanceof Error ? error.message : 'Failed to fetch version info'
+          backendError: error instanceof Error ? error.message : 'Failed to fetch version info'
         }));
       }
     };
@@ -96,11 +118,7 @@ const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) =>
         <div className="modal-body">
           {versionInfo.isLoading && <p className="loading-message">Loading version information...</p>}
           
-          {versionInfo.error && (
-            <p className="error-message">Error: {versionInfo.error}</p>
-          )}
-          
-          {!versionInfo.isLoading && !versionInfo.error && (
+          {!versionInfo.isLoading && (
             <table className="build-info-table">
               <thead>
                 <tr>
@@ -113,12 +131,12 @@ const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) =>
                 <tr>
                   <td>Build Date</td>
                   <td>{versionInfo.frontendBuildDate || 'Not available'}</td>
-                  <td>{versionInfo.backendBuildDate || 'Not available'}</td>
+                  <td>{versionInfo.backendBuildDate || (versionInfo.backendError ? 'Unavailable' : 'Not available')}</td>
                 </tr>
                 <tr>
                   <td>Version</td>
                   <td>{versionInfo.frontendVersion || 'Not available'}</td>
-                  <td>{versionInfo.backendVersion || 'Not available'}</td>
+                  <td>{versionInfo.backendVersion || (versionInfo.backendError ? 'Unavailable' : 'Not available')}</td>
                 </tr>
                 <tr>
                   <td>Current Time</td>
@@ -128,6 +146,14 @@ const BuildInfo: React.FC<BuildInfoProps> = ({ backendUrl, isOpen, onClose }) =>
                   <tr>
                     <td>Backend Time</td>
                     <td colSpan={2}>{versionInfo.backendTimestamp}</td>
+                  </tr>
+                )}
+                {versionInfo.backendError && (
+                  <tr className="error-row">
+                    <td>Backend Status</td>
+                    <td colSpan={2} className="error-message">
+                      Error: {versionInfo.backendError}
+                    </td>
                   </tr>
                 )}
               </tbody>

@@ -54,6 +54,19 @@
   font-weight: bold;
 }
 
+/* Error row in version info table */
+.error-row {
+  background-color: #fff8f8;
+}
+
+.error-row .error-message {
+  background-color: #fff8f8;
+  text-align: left;
+  padding: 5px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
 /* Modal styles */
 .modal-overlay {
   position: fixed;
