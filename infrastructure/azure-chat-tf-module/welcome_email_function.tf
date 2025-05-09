@@ -72,6 +72,9 @@ resource "azurerm_function_app_flex_consumption" "welcome_email" {
 
     # Use a default sender email or make it configurable
     SenderEmail = "DoNotReply@${azurerm_email_communication_service_domain.chat_email_domain.mail_from_sender_domain}"
+
+    # Full URL including https:// protocol for the frontend
+    FRONTEND_URL = var.front_door_hostname != "" ? "https://${var.front_door_hostname}" : "https://${azurerm_cdn_frontdoor_endpoint.chat_fd_endpoint.host_name}"
   }
 
   lifecycle {

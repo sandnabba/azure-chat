@@ -59,22 +59,6 @@ output "backend_app_id" {
   value       = azurerm_linux_web_app.backend.id
 }
 
-# Frontend App
-output "frontend_app_name" {
-  description = "The name of the frontend App Service"
-  value       = azurerm_linux_web_app.frontend.name
-}
-
-output "frontend_app_url" {
-  description = "The URL of the frontend App Service"
-  value       = "https://${azurerm_linux_web_app.frontend.default_hostname}"
-}
-
-output "frontend_app_id" {
-  description = "The ID of the frontend App Service"
-  value       = azurerm_linux_web_app.frontend.id
-}
-
 # Application Insights
 output "application_insights_instrumentation_key" {
   description = "The instrumentation key for Application Insights"
@@ -100,6 +84,17 @@ output "storage_connection_string" {
   sensitive   = true
 }
 
+# Static Website
+output "static_website_url" {
+  description = "The URL of the static website hosted in Blob Storage"
+  value       = azurerm_storage_account.chat_storage.primary_web_endpoint
+}
+
+output "static_website_hostname" {
+  description = "The hostname of the static website (without protocol) for DNS configuration"
+  value       = azurerm_storage_account.chat_storage.primary_web_host
+}
+
 # Communication Service
 output "communication_service_name" {
   description = "The name of the Azure Communication Service"
@@ -121,4 +116,25 @@ output "email_service_name" {
 output "email_service_id" {
   description = "The resource ID of the Azure Communication Email Service"
   value       = azurerm_email_communication_service.chat_email.id
+}
+
+# Front Door Outputs
+output "front_door_endpoint_url" {
+  description = "The URL of the Front Door endpoint"
+  value       = "https://${azurerm_cdn_frontdoor_endpoint.chat_fd_endpoint.host_name}"
+}
+
+output "front_door_cname_target" {
+  description = "The DNS target to use for a CNAME record"
+  value       = azurerm_cdn_frontdoor_endpoint.chat_fd_endpoint.host_name
+}
+
+output "front_door_custom_domain_validation_token" {
+  description = "The validation token required for the custom domain TXT record (only available when front_door_hostname is set)"
+  value       = var.front_door_hostname != "" ? azurerm_cdn_frontdoor_custom_domain.chat_custom_domain[0].validation_token : null
+}
+
+output "front_door_endpoint_name" {
+  description = "The name of the Front Door endpoint"
+  value       = azurerm_cdn_frontdoor_endpoint.chat_fd_endpoint.name
 }
