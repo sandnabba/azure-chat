@@ -44,9 +44,28 @@ docker build -t azure-chat-frontend .
 docker run -p 80:80 azure-chat-frontend
 ```
 
+### Static Build Output
+
+To build the static files and export them to a local directory (for hosting in Azure Blob Storage, CDN, etc.):
+
+```bash
+# Build and export static files to ./dist
+make build-static
+
+# Or specify a custom output directory
+make build-static STATIC_OUTPUT_DIR=./my-output-dir
+```
+
+This uses Docker BuildKit to extract the built static files without running a container.
+
 ### Deployment
 
 This application is designed to be deployed as a custom container on Azure App Service. The production Dockerfile is optimized for this deployment target, with Nginx serving static files.
+
+The static build output can alternatively be deployed to:
+- Azure Blob Storage static website hosting
+- Azure CDN or Front Door
+- Any static web hosting service
 
 ## Alternative Setup (Local Development)
 

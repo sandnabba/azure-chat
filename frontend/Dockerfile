@@ -18,6 +18,10 @@ RUN echo "};" >> src/build-info.js
 
 RUN npm run build
 
+# Static build export stage - used by build-static target
+FROM scratch AS build-static
+COPY --from=builder /app/dist /
+
 # Production stage
 FROM nginx:stable-alpine
 
