@@ -1,5 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends, Header, WebSocket, WebSocketDisconnect, BackgroundTasks, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 import uuid
 from datetime import datetime
 import os
@@ -382,15 +383,70 @@ async def verify_email(token: str):
     
     return {"success": True, "message": "Email verified successfully"}
 
+@app.get("/api/auth/verify-email-redirect/{token}")
+async def verify_email_redirect(token: str):
+    """Verify a user's email and redirect to the frontend app.
+    This endpoint is specifically designed for static website hosting in Azure Blob Storage
+    where client-side routing doesn't work for direct URL access.
+    """
+    # Get frontend URL from environment variable with better local development fallback
+    # In local development, check for FRONTEND_URL, then use localhost with common frontend ports
+    if os.getenv("FRONTEND_URL"):
+        frontend_url = os.getenv("FRONTEND_URL")
+    elif db.dev_mode:
+        # In dev mode, try common frontend development ports
+        frontend_url = "http://localhost:3000"  # Default for React/Next.js
+        # Check if we can connect to the frontend at different ports
+        import socket
+        for port in [3000, 5173, 8080, 4200]:  # Common ports for React, Vite, Vue, Angular
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            result = sock.connect_ex(('localhost', port))
+            sock.close()
+            if result == 0:  # Port is open
+                frontend_url = f"http://localhost:{port}"
+                print(f"Detected frontend running at {frontend_url}")
+                break
+    else:
+        # Production fallback
+        frontend_url = "https://chat.azure.sandnabba.se"
+    
+    print(f"Using frontend URL for redirect: {frontend_url}")
+    
+    if not token:
+        # If no token is provided, redirect to frontend with error parameter
+        return RedirectResponse(f"{frontend_url}/?verification=error&reason=missing-token")
+    
+    try:
+        # Verify the token using the same logic as the regular endpoint
+        verification_result = await db.verify_email(token)
+        
+        if verification_result["success"]:
+            # Log the successful account activation
+            print(f"INFO: Activating user account: {verification_result['user_id']} (email: {verification_result['email']})")
+            # Redirect to frontend with success parameter
+            return RedirectResponse(f"{frontend_url}/?verification=success")
+        else:
+            # Redirect to frontend with error parameter
+            return RedirectResponse(f"{frontend_url}/?verification=error&reason=invalid-token")
+    except Exception as e:
+        print(f"Error during email verification redirect: {e}")
+        # Redirect to frontend with error parameter
+        return RedirectResponse(f"{frontend_url}/?verification=error&reason=server-error")
+
 @app.websocket("/ws/{room_id}/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
     # Auto-register the user if they don't exist
     if user_id not in active_users:
+        # Create a temporary user with placeholder values for required fields
+        # These users are transient and can't login through normal authentication
         active_users[user_id] = User(
             id=user_id,
-            username=user_id
+            username=user_id,
+            email=f"{user_id}@temporary.chat",  # Add placeholder email
+            password="temp_not_usable_password",  # Add placeholder password (not hash)
+            email_confirmed=True  # Mark as confirmed so it doesn't trigger verification
         )
-        print(f"Auto-registered user: {user_id}")
+        print(f"Auto-registered temporary user for WebSocket: {user_id}")
     
     await websocket.accept()
     print(f"WebSocket connection accepted for {user_id} in room {room_id}")
@@ -426,7 +482,7 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
                             id=str(uuid.uuid4()),
                             chatId=room_id,
                             senderId=user_id,
-                            senderName=active_users.get(user_id, User(id=user_id, username=user_id)).username,
+                            senderName=active_users.get(user_id, User(id=user_id, username=user_id, email=f"{user_id}@temporary.chat", password="temp_not_usable_password")).username,
                             content=msg_content.get("content"),
                             timestamp=datetime.utcnow().isoformat(),
                             type="text"
