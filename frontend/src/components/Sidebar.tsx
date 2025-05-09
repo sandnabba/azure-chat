@@ -3,6 +3,7 @@ import './Sidebar.css';
 import { useChat } from '../contexts/ChatContext';
 import AddChannelModal from './AddChannelModal';
 import DeleteChannelModal from './DeleteChannelModal';
+import { getApiBaseUrl } from '../utils/apiUrls';
 
 interface SidebarProps {
   selectedRoom: string;
@@ -25,7 +26,8 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [refreshTrigger, setRefreshTrigger] = useState(0); // To force refresh
 
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  // Use the centralized utility to get API URL, just like the rest of the application
+  const apiUrl = getApiBaseUrl();
 
   // Fetch rooms from server with better error handling
   const fetchRooms = useCallback(async () => {
