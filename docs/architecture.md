@@ -2,6 +2,7 @@
 
 ## Table of Contents
 
+- [Background](#background)
 - [System Overview](#system-overview)
 - [Azure Data Services Integration](#azure-data-services-integration)
 - [Communication Flow](#communication-flow)
@@ -11,7 +12,11 @@
 - [Scalability](#scalability)
 - [Monitoring and Logging](#monitoring-and-logging)
 
-> **Learning Project**: This architecture represents a learning exercise to explore Azure data and storage services, specifically Cosmos DB and Blob Storage, with plans to incorporate Queue Storage and serverless functions. The project intentionally omits certain production-ready features like robust security, authentication, and testing to focus on the core Azure data services integration.
+## Background
+
+This project serves as a **learning exercise** to explore and understand Azure cloud services. It is designed to demonstrate how a relatable application, such as a chat service, can be built using common cloud platform technologies. The focus is on integrating Azure data and storage services, including Cosmos DB and Blob Storage, with plans to incorporate Queue Storage and serverless functions.
+
+> **Important**: This is not a production-ready application. Features like robust security, authentication, and comprehensive testing have been intentionally omitted to prioritize learning and experimentation with Azure services. The goal is to provide a hands-on experience with Azure's capabilities rather than deliver a fully production-grade solution.
 
 ## System Overview
 
@@ -22,28 +27,44 @@ Azure Chat is a real-time chat application with a multi-tier architecture levera
 3. **Data Layer**: Cosmos DB (NoSQL) for messages/channels, Blob Storage for file attachments
 4. **Serverless Layer**: Azure Function triggered by Cosmos DB change feed for sending welcome verification emails
 5. **Communication Layer**: Azure Communication Service for email delivery
+6. **Global Load Balancing**: Azure Front Door for content delivery and traffic routing
 
 ```
-┌─────────────┐    ┌─────────────┐    ┌─────────────┐
-│  Frontend   │━━━▶│  Backend    │━━━▶│  Database   │
-│  (React)    │◀━━━│  (FastAPI)  │◀━━━│(Cosmos DB)  │
-└─────────────┘    └─────────────┘    └─────────────┘
-                         │                    │
-                         ▼                    │
-                   ┌─────────────┐            │ Change Feed
-                   │  Storage    │            │ Trigger
-                   │  (Blob)     │            │
-                   └─────────────┘            ▼
-                                     ┌──────────────────────┐
-                                     │ Welcome Email        │
-                                     │ Function (Serverless)│
-                                     └──────────────────────┘
-                                               │
-                                               ▼
-                                     ┌──────────────────────┐
-                                     │ Azure Communication  │
-                                     │ Service (Email)      │
-                                     └──────────────────────┘
+                    ┌──────────────┐
+                    │  Front Door  │
+                    │  (Global LB) │
+                    └──────────────┘
+                           │
+                    ┌──────┴───────┐
+                    │              │
+                    ▼              ▼
+         ┌─────────────┐    ┌─────────────┐
+         │  Frontend   │    │  Backend    │
+         │  (React)    │    │  (FastAPI)  │
+         └─────────────┘    └─────────────┘
+                                  │
+                         ┌────────┴────────┐
+                         │                 │
+                         ▼                 ▼
+                 ┌─────────────┐    ┌─────────────┐
+                 │  Storage    │    │  Database   │
+                 │  (Blob)     │    │(Cosmos DB)  │
+                 └─────────────┘    └─────────────┘
+                                          │
+                                          │ Change Feed
+                                          │ Trigger
+                                          ▼
+                             ┌──────────────────────┐
+                             │ Welcome Email        │
+                             │ Function (Serverless)│
+                             └──────────────────────┘
+                                          │
+                                          │
+                                          ▼
+                             ┌──────────────────────┐
+                             │ Azure Communication  │
+                             │ Service (Email)      │
+                             └──────────────────────┘
 ```
 
 ## Azure Data Services Integration

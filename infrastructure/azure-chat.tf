@@ -36,6 +36,9 @@ module "azure_chat" {
   # Allow localhost for development
   additional_allowed_origins = ["http://localhost:5173", "http://localhost:8000"]
 
+  # Front Door configuration
+  front_door_hostname = var.front_door_hostname
+
   tags = {}
 }
 
@@ -48,16 +51,6 @@ output "backend_app_name" {
 output "backend_app_url" {
   description = "The URL of the backend App Service"
   value       = module.azure_chat.backend_app_url
-}
-
-output "frontend_app_name" {
-  description = "The name of the frontend App Service"
-  value       = module.azure_chat.frontend_app_name
-}
-
-output "frontend_app_url" {
-  description = "The URL of the frontend App Service"
-  value       = module.azure_chat.frontend_app_url
 }
 
 output "cosmos_db_uri" {

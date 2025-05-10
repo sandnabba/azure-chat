@@ -7,6 +7,8 @@
 locals {
   resource_group_name = "${var.identifier}-chat-rg"
   vnet_name           = "${var.identifier}-chat-vnet"
+  # Front Door endpoint name for shared use across modules
+  front_door_endpoint_name = "${var.identifier}-chat-endpoint"
 }
 
 # --- Resource Group ---

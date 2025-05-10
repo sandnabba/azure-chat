@@ -1,4 +1,5 @@
 import { ChatMessage } from '../types/chat';
+import { getApiBaseUrl, getWebSocketBaseUrl, logApiConfig } from '../utils/apiUrls';
 
 export class ChatService {
   private connection: WebSocket | null = null;
@@ -16,19 +17,13 @@ export class ChatService {
   private currentUserId: string = '';
   private roomChangeInProgress = false;
 
-  constructor(baseUrl: string = import.meta.env.VITE_API_URL || 'http://localhost:8000') {
-    // Set API base URL for HTTP requests
-    this.apiBaseUrl = baseUrl.replace(/\/$/, '');
-
-    // Set WebSocket base URL for WebSocket connections
-    if (baseUrl.includes('azurewebsites.net')) {
-      this.wsBaseUrl = baseUrl.replace(/^http:\/\//, 'wss://').replace(/^https:\/\//, 'wss://').replace(/\/$/, '');
-    } else {
-      this.wsBaseUrl = baseUrl.replace(/^http:\/\//, 'ws://').replace(/^https:\/\//, 'wss://').replace(/\/$/, '');
-    }
-
-    console.log('API Base URL:', this.apiBaseUrl);
-    console.log('WebSocket Base URL:', this.wsBaseUrl);
+  constructor() {
+    // Use the centralized URL utilities instead of handling URL logic here
+    this.apiBaseUrl = getApiBaseUrl();
+    this.wsBaseUrl = getWebSocketBaseUrl();
+    
+    // Log the URLs for debugging
+    logApiConfig();
   }
 
   public async startConnection(userId: string, username: string, roomId: string = 'general'): Promise<void> {
@@ -45,6 +40,7 @@ export class ChatService {
       await this.cleanupExistingConnection();
 
       // Create WebSocket URL with the specified room and userId
+      // Match the backend's pattern of /ws/{room_id}/{user_id}
       const wsUrl = `${this.wsBaseUrl}/ws/${roomId}/${userId}`;
       console.log(`Connecting to WebSocket at: ${wsUrl} (Username: ${username})`);
 

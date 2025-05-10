@@ -5,14 +5,34 @@ resource "azurerm_storage_account" "chat_storage" {
   resource_group_name      = var.resource_group_name
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  account_kind             = "StorageV2"  # Required for static website hosting
   tags                     = var.tags
 
   # Enable blob public access
   allow_nested_items_to_be_public = true
 
+  # CORS configuration for the static website
+  blob_properties {
+    cors_rule {
+      allowed_headers    = ["*"]
+      allowed_methods    = ["GET", "HEAD", "OPTIONS"]
+      allowed_origins    = concat(["https://${var.frontend_app_name}.azurewebsites.net"], var.additional_allowed_origins)
+      exposed_headers    = ["*"]
+      max_age_in_seconds = 3600
+    }
+  }
+
   lifecycle {
     ignore_changes = [tags["Cost Center"]]
   }
+}
+
+# Static Website Configuration - using the new recommended resource
+resource "azurerm_storage_account_static_website" "static_website" {
+  storage_account_id = azurerm_storage_account.chat_storage.id
+  
+  index_document     = "index.html"
+  error_404_document = "404.html"  # Now using a dedicated 404 page
 }
 
 # Public Blob Container with 1-day retention

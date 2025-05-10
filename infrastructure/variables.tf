@@ -55,3 +55,10 @@ variable "dns_zone_name" {
   type        = string
   default     = "example.com"
 }
+
+# --- Front Door Variables ---
+variable "front_door_hostname" {
+  description = "The custom hostname for the Front Door endpoint. If not specified, the default Azure Front Door hostname will be used."
+  type        = string
+  default     = ""
+}

@@ -6,7 +6,7 @@
 # Configuration variables - customize these or set via environment variables
 # Default values are used only if no value is provided in local.env
 IDENTIFIER?=dev
-RESOURCE_GROUP?=$(IDENTIFIER)-chat-rg
+RESOURCE_GROUP?=$(RESOURCE_GROUP_NAME)
 CONTAINER_REGISTRY_SERVER?=localhost:5000
 CONTAINER_REGISTRY?=$(CONTAINER_REGISTRY_SERVER)
 IMAGE_NAME=$(CONTAINER_REGISTRY)/azure-chat-backend:latest

@@ -129,3 +129,10 @@ variable "email_service_name" {
   type        = string
   default     = "azure-chat-email"
 }
+
+# Front Door Configuration
+variable "front_door_hostname" {
+  description = "The custom hostname for the Front Door endpoint. If not specified, the default Azure Front Door hostname will be used."
+  type        = string
+  default     = ""
+}

@@ -32,6 +32,20 @@ def process_new_users(users: func.DocumentList):
         
     # Get the frontend URL from environment
     frontend_base_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+    # Get the backend URL for direct API access
+    backend_base_url = os.environ.get("BACKEND_URL", "http://localhost:8000")
+    
+    # Use the backend URL if available, otherwise fall back to constructed URL
+    if not backend_base_url:
+        # Try to derive backend URL from frontend URL by replacing the domain
+        # This is a best-effort approach that might work in many cases
+        if frontend_base_url.startswith("https://chat."):
+            # For example, if frontend is https://chat.domain.com, assume backend is https://api.domain.com
+            backend_base_url = frontend_base_url.replace("https://chat.", "https://api.")
+        else:
+            # Just use the frontend URL and assume backend is available at /api path
+            backend_base_url = frontend_base_url
+    
     sender_email = os.environ.get("SenderEmail", "donotreply@azuremanaged.com")
     
     # Initialize Email client
@@ -56,9 +70,10 @@ def process_new_users(users: func.DocumentList):
                     had_errors = True
                     continue
                 
-                # Create the verification link
-                verification_link = f"{frontend_base_url}/verify-email/{verification_token}"
-                
+                # Create verification links that point directly to the root page with a verification_token parameter
+                # This works better with blob storage static website hosting
+                verification_link = f"{frontend_base_url}/?verification_token={verification_token}"
+                em
                 # Create the email message as a dictionary (correct format for this SDK version)
                 message = {
                     "content": {

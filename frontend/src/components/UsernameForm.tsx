@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import './UsernameForm.css';
+import { getApiBaseUrl } from '../utils/apiUrls';
 
 interface AuthUser {
   id: string;
@@ -22,8 +23,8 @@ const UsernameForm = ({ onSelectUsername }: UsernameFormProps) => {
   const [error, setError] = useState('');
   const [registrationSuccessful, setRegistrationSuccessful] = useState(false);
   
-  // Get API URL from environment variable
-  const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+  // Get API URL using the centralized utility
+  const apiBaseUrl = getApiBaseUrl();
 
   const validateRegisterForm = () => {
     const trimmedUsername = username.trim();
