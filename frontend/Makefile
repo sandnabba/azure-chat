@@ -6,19 +6,18 @@
 # Configuration variables - customize these or set via environment variables
 # Default values are used only if no value is provided in local.env
 IDENTIFIER?=dev
-RESOURCE_GROUP?=$(IDENTIFIER)-chat-rg
+RESOURCE_GROUP?=$(RESOURCE_GROUP_NAME)
 CONTAINER_REGISTRY_SERVER?=localhost:5000
 CONTAINER_REGISTRY?=$(CONTAINER_REGISTRY_SERVER)
 IMAGE_NAME=$(CONTAINER_REGISTRY)/azure-chat-frontend:latest
 CONTAINER_NAME=azure-chat-frontend-dev
 DEV_CONTAINER_NAME=azure-chat-frontend-dev-live
 PORT?=80
-FRONTEND_APP_NAME?=chat-web-$(IDENTIFIER)
 STATIC_OUTPUT_DIR?=./dist
 # Use STORAGE_ACCOUNT_NAME directly from local.env
 STORAGE_ACCOUNT_NAME?=
 
-.PHONY: build push run shell clean dev install-deps webapp-restart webapp-log webapp-http-log acr-login build-static deploy-static-web
+.PHONY: build push run shell clean dev install-deps acr-login build-static deploy-static-web
 
 acr-login:
 	@echo "Logging into Azure Container Registry..."
@@ -101,12 +100,3 @@ clean:
 	docker rm -f $(CONTAINER_NAME) || true
 	docker rm -f $(DEV_CONTAINER_NAME) || true
 	rm -rf $(STATIC_OUTPUT_DIR)
-
-webapp-restart:
-	az webapp restart --resource-group $(RESOURCE_GROUP) --name $(FRONTEND_APP_NAME)
-
-webapp-log:
-	az webapp log tail --resource-group $(RESOURCE_GROUP) --name $(FRONTEND_APP_NAME)
-
-webapp-http-log:
-	az webapp log tail --resource-group $(RESOURCE_GROUP) --name $(FRONTEND_APP_NAME) --provider http
