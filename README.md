@@ -16,11 +16,13 @@ The main purpose of this project is to serve as a learning and exploration platf
   * CosmosDB change feed
 * Storage Service
   * Blob storage
-  * Static website (Planned)
+  * Static website
 * App Service
 * Function Apps
-* Communication service
+* Communication service (email delivery)
+* Front Door (CDN and reverse proxy)
 * Service Bus (Planned)
+* DNS Zones (Optional)
 
 
 ## Structure
@@ -37,10 +39,12 @@ The main purpose of this project is to serve as a learning and exploration platf
 
 See the documentation in the respective folders for setup instructions:
 
+- [Getting Started](docs/getting_started.md)
 - [Backend Documentation](backend/README.md)
 - [Frontend Documentation](frontend/README.md)
 - [Infrastructure Documentation](docs/infrastructure.md)
 - [Architecture Documentation](docs/architecture.md)
+- [Discussion](docs/discussion.md)
 
 ## Limitations
 
@@ -58,9 +62,10 @@ This project does not cover Docker or basic container development. If you are ne
 
 [DevOps Lab Kit](https://github.com/sandnabba/devops-lab-kit)
 
-## To-Do
+## To-Do / Development ideas
 
 * Investigate SignalR service.
 * Enable user-to-user messaging.
-* Provide clear "Getting Started" instructions:
-  * Define `local.env` and `terraform.tfvars`.
+* Make mobile friendly UI.
+* Make a persistent websocket (notifications for new messages in other channels).
+* Enable automatic login after email confirmation.
