@@ -30,7 +30,7 @@ prepare-build:
 	
 	@# Install dependencies into the build directory
 	@echo "Installing dependencies to build directory..."
-	python -m pip install --target $(BUILD_DIR) --upgrade -r requirements.txt
+	python3 -m pip install --target $(BUILD_DIR) --upgrade -r requirements.txt
 	
 	@# Set proper permissions for Azure Function App (files: 644, directories: 755)
 	@echo "Setting proper permissions for Azure Function App deployment..."
