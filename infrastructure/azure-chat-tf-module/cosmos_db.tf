@@ -33,7 +33,7 @@ resource "azurerm_cosmosdb_sql_database" "chat_database" {
 
 # Cosmos DB SQL Container for Messages
 resource "azurerm_cosmosdb_sql_container" "messages_container" {
-  name                = var.cosmos_db_container
+  name                = "Messages"
   resource_group_name = var.resource_group_name
   account_name        = azurerm_cosmosdb_account.chat_db.name
   database_name       = azurerm_cosmosdb_sql_database.chat_database.name

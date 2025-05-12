@@ -25,7 +25,7 @@ module "azure_chat" {
   location     = "westeurope"
   
   # Cosmos DB configuration
-  cosmos_db_name      = "ChatDB"
+  cosmos_db_name      = "AzureChatDB"
   cosmos_db_container = "Messages"
   message_ttl_seconds = 2592000  # 30 days
   

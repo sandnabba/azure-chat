@@ -8,7 +8,7 @@ app = func.FunctionApp()
 # Define a new trigger for the Users container
 @app.cosmos_db_trigger(arg_name="users", 
                       container_name="Users", 
-                      database_name="ChatDB", 
+                      database_name="AzureChatDB", 
                       connection="CosmosDBConnectionString",
                       lease_container_name="leases",
                       create_lease_container_if_not_exists=True)
@@ -19,6 +19,16 @@ def process_new_users(users: func.DocumentList):
         return
         
     logging.info(f"Processing {len(users)} user documents")
+    
+    # Add debug logging for first document keys to help debug
+    if len(users) > 0:
+        try:
+            first_user = users[0]
+            logging.info(f"First document properties: {', '.join(first_user.keys())}")
+            logging.info(f"Document has email_verification_token: {first_user.get('email_verification_token') is not None}")
+            logging.info(f"Document has email_confirmed: {first_user.get('email_confirmed', False)}")
+        except Exception as e:
+            logging.warning(f"Could not log document keys: {str(e)}")
     
     # Track if any errors occurred during processing
     had_errors = False
@@ -58,12 +68,17 @@ def process_new_users(users: func.DocumentList):
     
     for user in users:
         try:
+            # Log the document we're processing
+            logging.info(f"Processing user document: {user.get('id')}")
+            
             # Check if this is a new user who needs verification
             # Only process users with verification tokens who haven't been verified yet
             if user.get("email_verification_token") and not user.get("email_confirmed", False):
                 email = user.get("email")
                 username = user.get("username")
                 verification_token = user.get("email_verification_token")
+                
+                logging.info(f"Found unverified user with verification token: {username} ({email})")
                 
                 if not email or not username or not verification_token:
                     logging.warning("Missing required user fields for verification email")
@@ -73,7 +88,7 @@ def process_new_users(users: func.DocumentList):
                 # Create verification links that point directly to the root page with a verification_token parameter
                 # This works better with blob storage static website hosting
                 verification_link = f"{frontend_base_url}/?verification_token={verification_token}"
-                em
+
                 # Create the email message as a dictionary (correct format for this SDK version)
                 message = {
                     "content": {
@@ -106,6 +121,8 @@ def process_new_users(users: func.DocumentList):
                 except Exception as email_error:
                     logging.error(f"Failed to send verification email to {email}: {email_error}")
                     had_errors = True
+            else:
+                logging.info(f"Skipping document - not a new user needing verification: {user.get('id')}")
             
         except Exception as e:
             logging.error(f"Error processing user document: {e}")
@@ -115,3 +132,5 @@ def process_new_users(users: func.DocumentList):
     if had_errors:
         logging.error("One or more errors occurred during email sending process")
         raise Exception("One or more errors occurred during email sending process")
+    else:
+        logging.info("Function completed successfully - all users processed")

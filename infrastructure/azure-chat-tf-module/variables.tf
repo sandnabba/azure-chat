@@ -49,13 +49,7 @@ variable "container_registry_admin_password" {
 variable "cosmos_db_name" {
   description = "Name of the Cosmos DB database"
   type        = string
-  default     = "ChatDatabase"
-}
-
-variable "cosmos_db_container" {
-  description = "Name of the Cosmos DB container for chat messages"
-  type        = string
-  default     = "ChatMessages"
+  default     = "AzureChatDB"
 }
 
 variable "message_ttl_seconds" {

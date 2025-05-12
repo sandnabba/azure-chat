@@ -11,4 +11,7 @@
 # container_registry_admin_username = "your-registry-username"
 # container_registry_admin_password = "your-registry-password"
 
-# Optional:
+# ==================
+# Optional variables
+# ==================
+# front_door_hostname   = "my.domain.name"
