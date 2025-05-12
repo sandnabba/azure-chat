@@ -1,6 +1,6 @@
 # Storage Account for Azure Chat Services
 resource "azurerm_storage_account" "chat_storage" {
-  name                     = "${replace(var.identifier, "-", "")}func"
+  name                     = "${replace(var.identifier, "-", "")}storage"
   location                 = var.location
   resource_group_name      = var.resource_group_name
   account_tier             = "Standard"
