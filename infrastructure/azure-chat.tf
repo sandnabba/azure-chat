@@ -19,10 +19,6 @@ module "azure_chat" {
   container_registry_admin_username = var.container_registry_admin_username
   container_registry_admin_password = var.container_registry_admin_password
 
-  # Cosmos DB configuration
-  cosmos_db_name      = "ChatDB"
-  cosmos_db_container = "Messages"
-
   # App names - must be globally unique
   backend_app_name  = "chat-api-${var.identifier}"
   frontend_app_name = "chat-web-${var.identifier}"

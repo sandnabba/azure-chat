@@ -81,8 +81,6 @@ resource "azurerm_linux_web_app" "backend" {
     "WEBSITES_CONTAINER_START_TIME_LIMIT"   = "600"
     "COSMOS_ENDPOINT"                       = azurerm_cosmosdb_account.chat_db.endpoint
     "COSMOS_KEY"                            = azurerm_cosmosdb_account.chat_db.primary_key
-    "COSMOS_DATABASE"                       = azurerm_cosmosdb_sql_database.chat_database.name
-    "COSMOS_MESSAGES_CONTAINER"             = azurerm_cosmosdb_sql_container.messages_container.name
     "APPINSIGHTS_INSTRUMENTATIONKEY"        = azurerm_application_insights.chat_app_insights.instrumentation_key
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.chat_app_insights.connection_string
     "AZURE_STORAGE_CONNECTION_STRING"       = azurerm_storage_account.chat_storage.primary_connection_string
