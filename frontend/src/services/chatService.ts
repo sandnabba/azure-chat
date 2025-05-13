@@ -6,53 +6,63 @@ export class ChatService {
   private readonly apiBaseUrl: string;
   private readonly wsBaseUrl: string;
   private messageCallbacks: ((message: ChatMessage) => void)[] = [];
-  private userJoinedCallbacks: ((username: string) => void)[] = [];
-  private userLeftCallbacks: ((username: string) => void)[] = [];
+  private userJoinedRoomCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
+  private userLeftRoomCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
+  private subscribedCallbacks: ((roomId: string) => void)[] = [];
+  private unsubscribedCallbacks: ((roomId: string) => void)[] = [];
+  private disconnectedCallbacks: (() => void)[] = [];
+  private subscriptionErrorCallbacks: ((roomId: string, error: Error) => void)[] = []; // Added for subscription errors
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
-  private reconnectDelay = 2000; // 2 seconds initial delay
-  private reconnectTimeoutId: number | null = null;
-  private currentRoomId: string = 'general';
+  private maxReconnectAttempts = 5;
+  private reconnectDelay = 3000;
+  private reconnectTimeoutId: number | null = null; // Explicitly number for window.setTimeout
+  private currentRoomId: string | null = null;
   private currentUsername: string = '';
   private currentUserId: string = '';
-  private roomChangeInProgress = false;
+  private subscribedRooms: Set<string> = new Set();
+  private pendingSubscriptions: Map<string, { resolve: () => void; reject: (reason?: any) => void; timeoutId: number }> = new Map();
+  private roomsToResubscribe: Set<string> = new Set(); // Added for tracking rooms to resubscribe
 
   constructor() {
-    // Use the centralized URL utilities instead of handling URL logic here
     this.apiBaseUrl = getApiBaseUrl();
     this.wsBaseUrl = getWebSocketBaseUrl();
-    
-    // Log the URLs for debugging
     logApiConfig();
   }
 
-  public async startConnection(userId: string, username: string, roomId: string = 'general'): Promise<void> {
-    // Reset reconnect attempts on new connection
+  public getUserId(): string | null {
+    return this.currentUserId;
+  }
+
+  public getCurrentUsername(): string | null {
+    return this.currentUsername;
+  }
+
+  public isConnected(): boolean {
+    return this.connection !== null && this.connection.readyState === WebSocket.OPEN;
+  }
+
+  public isSubscribedTo(roomId: string): boolean {
+    return this.subscribedRooms.has(roomId);
+  }
+
+  public async startConnection(userId: string, username: string): Promise<void> {
     this.reconnectAttempts = 0;
-    
-    // Store current user and room
     this.currentUserId = userId;
     this.currentUsername = username;
-    this.currentRoomId = roomId;
 
     try {
-      // Close any existing connection first
       await this.cleanupExistingConnection();
 
-      // Create WebSocket URL with the specified room and userId
-      // Match the backend's pattern of /ws/{room_id}/{user_id}
-      const wsUrl = `${this.wsBaseUrl}/ws/${roomId}/${userId}`;
-      console.log(`Connecting to WebSocket at: ${wsUrl} (Username: ${username})`);
+      const wsUrl = `${this.wsBaseUrl}/ws/${userId}`;
+      console.log(`Connecting to WebSocket at: ${wsUrl} (User ID: ${userId}, Username: ${username})`);
 
       this.connection = new WebSocket(wsUrl);
 
-      // Set up WebSocket event handlers with better error handling
       this.connection.onopen = this.handleOpen.bind(this);
-      this.connection.onclose = this.handleClose.bind(this, userId);
+      this.connection.onclose = this.handleClose.bind(this);
       this.connection.onerror = this.handleError.bind(this);
       this.connection.onmessage = this.handleMessage.bind(this);
 
-      // Return a promise that resolves when the connection is open or rejects on error
       return new Promise((resolve, reject) => {
         if (!this.connection) {
           return reject(new Error('Connection not initialized'));
@@ -75,70 +85,119 @@ export class ChatService {
         this.connection.addEventListener('open', openHandler);
         this.connection.addEventListener('error', errorHandler);
 
-        // Add a timeout to prevent hanging if connection never establishes
         setTimeout(() => {
           if (this.connection?.readyState !== WebSocket.OPEN) {
             this.connection?.removeEventListener('open', openHandler);
             this.connection?.removeEventListener('error', errorHandler);
             reject(new Error('WebSocket connection timed out'));
           }
-        }, 10000); // 10 second timeout
+        }, 10000);
       });
     } catch (error) {
       console.error('Error connecting to WebSocket:', error);
+      this.scheduleReconnect();
       throw error;
     }
   }
 
-  /**
-   * Update the current room ID - for this backend implementation we need to reconnect
-   * to properly join a different room's WebSocket.
-   */
-  public async updateCurrentRoom(roomId: string): Promise<void> {
-    if (roomId === this.currentRoomId) {
-      return; // No change needed
+  public subscribeToRoom(roomId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (!this.connection || this.connection.readyState !== WebSocket.OPEN) {
+        console.error("[ChatService] WebSocket not connected. Cannot subscribe to room:", roomId);
+        return reject(new Error("WebSocket not connected"));
+      }
+
+      const existingPendingSubscription = this.pendingSubscriptions.get(roomId);
+      if (existingPendingSubscription) {
+        console.warn(`[ChatService] Re-requesting subscription for ${roomId} while one is already pending. Clearing previous timeout. The previous request will not be resolved/rejected by this service.`);
+        window.clearTimeout(existingPendingSubscription.timeoutId);
+      }
+
+      console.log(`[ChatService] Sending subscribe request for room: ${roomId}`);
+      this.connection.send(JSON.stringify({ type: "subscribe", roomId }));
+
+      const timeoutId = window.setTimeout(() => {
+        console.error(`[ChatService] Subscription acknowledgement timeout for room ${roomId}.`);
+        const currentPending = this.pendingSubscriptions.get(roomId);
+        if (currentPending && currentPending.timeoutId === timeoutId) {
+          this.pendingSubscriptions.delete(roomId);
+        }
+        reject(new Error(`Subscription acknowledgement timeout for room ${roomId}`));
+      }, 5000);
+
+      this.pendingSubscriptions.set(roomId, { resolve, reject, timeoutId });
+    });
+  }
+
+  public unsubscribeFromRoom(roomId: string): void {
+    if (!this.connection || this.connection.readyState !== WebSocket.OPEN) {
+      console.warn('WebSocket not connected. Cannot unsubscribe from room.');
+      return;
     }
-    
-    if (this.roomChangeInProgress) {
-      console.log('Room change already in progress, skipping');
+    if (!this.subscribedRooms.has(roomId)) {
+      console.log(`Not subscribed to room ${roomId}, cannot unsubscribe.`);
+      return;
+    }
+    console.log(`Unsubscribing from room: ${roomId}`);
+    this.connection.send(JSON.stringify({ type: 'unsubscribe', roomId }));
+  }
+
+  public async switchRoom(newRoomId: string): Promise<void> {
+    if (newRoomId === this.currentRoomId && this.subscribedRooms.has(newRoomId)) {
+      console.log(`Already in room ${newRoomId} and subscribed.`);
       return;
     }
 
-    try {
-      this.roomChangeInProgress = true;
-      console.log(`Switching WebSocket connection from room ${this.currentRoomId} to ${roomId}`);
-      
-      // With the current backend implementation, we need to reconnect to a new WebSocket
-      // for each room to ensure messages are properly routed
-      await this.startConnection(this.currentUserId, this.currentUsername, roomId);
-      
-      console.log(`Successfully connected to new room: ${roomId}`);
-    } catch (error) {
-      console.error(`Error switching to room ${roomId}:`, error);
-      
-      // If reconnection fails, keep the current room
-      this.currentRoomId = roomId;
-    } finally {
-      this.roomChangeInProgress = false;
-    }
-  }
+    console.log(`Switching room from ${this.currentRoomId || 'none'} to ${newRoomId}`);
 
-  public async switchRoom(roomId: string): Promise<void> {
-    return this.updateCurrentRoom(roomId);
+    if (this.currentRoomId && this.subscribedRooms.has(this.currentRoomId)) {
+      this.unsubscribeFromRoom(this.currentRoomId);
+    }
+
+    this.subscribeToRoom(newRoomId);
+    this.currentRoomId = newRoomId;
   }
 
   private handleOpen(event: Event) {
-    console.log(`Connected to WebSocket for room ${this.currentRoomId}!`, event);
-    // Reset reconnect attempts on successful connection
+    console.log(`WebSocket connection opened for user ${this.currentUserId}!`, event);
     this.reconnectAttempts = 0;
+    if (this.reconnectTimeoutId !== null) {
+      window.clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    this.subscribedRooms.forEach(roomId => {
+      console.log(`Re-subscribing to ${roomId} after connection re-established.`);
+      this.subscribeToRoom(roomId);
+    });
+    if (this.currentRoomId && !this.subscribedRooms.has(this.currentRoomId)) {
+      this.subscribeToRoom(this.currentRoomId);
+    } else if (!this.currentRoomId && this.subscribedRooms.size === 0) {
+      console.log('No current room or subscriptions, defaulting to subscribe to "general"');
+      this.subscribeToRoom('general');
+    }
+    this.roomsToResubscribe.forEach(roomId => {
+      if (!this.isSubscribedTo(roomId)) {
+        console.log(`[ChatService] Resubscribing to room ${roomId} after connection opened.`);
+        this.subscribeToRoom(roomId)
+          .catch(error => {
+            console.error(`[ChatService] Error resubscribing to room ${roomId} via handleOpen:`, error);
+            if (this.onSubscriptionErrorCallback) {
+              this.onSubscriptionErrorCallback(roomId, new Error(`Resubscription failed for ${roomId}: ${error.message}`));
+            }
+          });
+      }
+    });
   }
 
-  private handleClose(userId: string, event: CloseEvent) {
-    console.log(`Disconnected from WebSocket service. Code: ${event.code} Reason: ${event.reason}`);
-
-    // Only try to reconnect on abnormal closure and if we haven't exceeded max attempts
-    if (event.code === 1006 && this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.scheduleReconnect(userId);
+  private handleClose(event: CloseEvent) {
+    console.log(`Disconnected from WebSocket service. User: ${this.currentUserId}, Code: ${event.code}, Reason: ${event.reason}`);
+    this.disconnectedCallbacks.forEach(callback => callback());
+    if (event.code !== 1000 && event.code !== 1005 && this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.scheduleReconnect();
+    } else if (event.code === 1000) {
+      console.log("WebSocket closed normally.");
+    } else {
+      console.log("WebSocket closed. Max reconnect attempts reached or normal closure without status.");
     }
   }
 
@@ -151,18 +210,68 @@ export class ChatService {
       const message = JSON.parse(event.data);
       console.log('Received WebSocket message:', message);
 
-      // Handle different message types
-      if (message.type === 'message' && message.data) {
-        // Ensure the message has the correct room ID
-        if (message.data.chatId && message.data.chatId !== this.currentRoomId) {
-          console.log(`Warning: Received message for room ${message.data.chatId} but we're in ${this.currentRoomId}`);
+      switch (message.type) {
+        case 'message':
+          if (message.data && message.data.chatId) {
+            this.messageCallbacks.forEach(callback => callback(message.data as ChatMessage));
+          } else {
+            console.warn('Received message without data or chatId:', message);
+          }
+          break;
+        case 'user_joined_room':
+          if (message.roomId && message.userId && message.username) {
+            this.userJoinedRoomCallbacks.forEach(callback => callback(message));
+          } else {
+            console.warn('Received user_joined_room without complete data:', message);
+          }
+          break;
+        case 'user_left_room':
+          if (message.roomId && message.userId && message.username) {
+            this.userLeftRoomCallbacks.forEach(callback => callback(message));
+          } else {
+            console.warn('Received user_left_room without complete data:', message);
+          }
+          break;
+        case 'subscription_ack': {
+          const ackMessage = message as { roomId: string; status: string; details?: string };
+          const subAckDetails = this.pendingSubscriptions.get(ackMessage.roomId);
+          if (subAckDetails) {
+            window.clearTimeout(subAckDetails.timeoutId);
+            if (ackMessage.status === "subscribed") {
+              console.log(`[ChatService] Subscription to ${ackMessage.roomId} acknowledged.`);
+              this.subscribedRooms.add(ackMessage.roomId);
+              subAckDetails.resolve();
+              this.subscribedCallbacks.forEach(callback => callback(ackMessage.roomId));
+            } else {
+              const errorMessage = ackMessage.details || `Subscription to ${ackMessage.roomId} failed`;
+              const error = new Error(errorMessage);
+              console.error(`[ChatService] Subscription to ${ackMessage.roomId} failed or denied:`, errorMessage);
+              subAckDetails.reject(error);
+              // Invoke subscription error callbacks
+              this.subscriptionErrorCallbacks.forEach(callback => callback(ackMessage.roomId, error));
+            }
+            this.pendingSubscriptions.delete(ackMessage.roomId);
+          } else {
+            console.warn(`[ChatService] Received subscription_ack for ${ackMessage.roomId}, but no pending subscription found. Might be a late ack or a re-subscription confirmation.`);
+            if (ackMessage.status === "subscribed") {
+              this.subscribedRooms.add(ackMessage.roomId);
+              this.subscribedCallbacks.forEach(callback => callback(ackMessage.roomId));
+            }
+          }
+          break;
         }
-        
-        this.messageCallbacks.forEach(callback => callback(message.data));
-      } else if (message.type === 'user_joined') {
-        this.userJoinedCallbacks.forEach(callback => callback(message.username));
-      } else if (message.type === 'user_left') {
-        this.userLeftCallbacks.forEach(callback => callback(message.username));
+        case 'unsubscription_ack': {
+          const unSubAckMessage = message as { roomId: string };
+          this.subscribedRooms.delete(unSubAckMessage.roomId);
+          console.log(`[ChatService] Unsubscription from ${unSubAckMessage.roomId} acknowledged.`);
+          this.unsubscribedCallbacks.forEach(callback => callback(unSubAckMessage.roomId));
+          break;
+        }
+        case 'error':
+          console.error('Received error message from WebSocket server:', message.message);
+          break;
+        default:
+          console.log('Received unhandled WebSocket message type:', message.type);
       }
     } catch (error) {
       console.error('Error parsing WebSocket message:', error, event.data);
@@ -170,25 +279,22 @@ export class ChatService {
   }
 
   private async cleanupExistingConnection(): Promise<void> {
-    // Clear any pending reconnect attempts
     if (this.reconnectTimeoutId !== null) {
-      clearTimeout(this.reconnectTimeoutId);
+      window.clearTimeout(this.reconnectTimeoutId); // Explicitly use window.clearTimeout
       this.reconnectTimeoutId = null;
     }
 
-    // Close existing connection if any
     if (this.connection) {
-      // Remove all event listeners to prevent potential memory leaks
       this.connection.onopen = null;
       this.connection.onclose = null;
       this.connection.onerror = null;
       this.connection.onmessage = null;
 
-      // Only close if not already closed
       if (this.connection.readyState !== WebSocket.CLOSED &&
           this.connection.readyState !== WebSocket.CLOSING) {
         try {
-          this.connection.close();
+          console.log("Closing existing WebSocket connection.");
+          this.connection.close(1000, "Client initiated new connection");
         } catch (e) {
           console.error('Error closing existing connection:', e);
         }
@@ -197,16 +303,20 @@ export class ChatService {
     }
   }
 
-  private scheduleReconnect(userId: string): void {
+  private scheduleReconnect(): void {
+    if (!this.currentUserId) {
+      console.error("Cannot schedule reconnect: currentUserId is not set.");
+      return;
+    }
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
+    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
 
-    console.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms...`);
+    console.log(`Scheduling reconnect attempt ${this.reconnectAttempts} for user ${this.currentUserId} in ${delay}ms...`);
 
-    this.reconnectTimeoutId = window.setTimeout(async () => {
-      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+    this.reconnectTimeoutId = window.setTimeout(async () => { // Explicitly use window.setTimeout
+      console.log(`Attempting to reconnect user ${this.currentUserId} (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
       try {
-        await this.startConnection(userId, this.currentUsername, this.currentRoomId);
+        await this.startConnection(this.currentUserId, this.currentUsername);
         console.log('Reconnection successful!');
       } catch (error) {
         console.error('Reconnection failed:', error);
@@ -215,25 +325,55 @@ export class ChatService {
   }
 
   public async stopConnection(): Promise<void> {
+    if (this.reconnectTimeoutId !== null) { // Clear any pending reconnect timeout
+      window.clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    this.subscribedRooms.forEach(roomId => {
+      if (this.connection && this.connection.readyState === WebSocket.OPEN) {
+        console.log(`Explicitly unsubscribing from ${roomId} during stopConnection.`);
+        this.connection.send(JSON.stringify({ type: 'unsubscribe', roomId }));
+      }
+    });
+    this.subscribedRooms.clear();
     await this.cleanupExistingConnection();
-    console.log('Connection stopped');
+    console.log('Connection stopped and rooms unsubscribed');
+    if (!this.connection) {
+      this.disconnectedCallbacks.forEach(callback => callback());
+    }
   }
 
   public onReceiveMessage(callback: (message: ChatMessage) => void): void {
     this.messageCallbacks.push(callback);
   }
 
-  public onUserJoined(callback: (username: string) => void): void {
-    this.userJoinedCallbacks.push(callback);
+  public onUserJoinedRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    this.userJoinedRoomCallbacks.push(callback);
   }
 
-  public onUserLeft(callback: (username: string) => void): void {
-    this.userLeftCallbacks.push(callback);
+  public onUserLeftRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    this.userLeftRoomCallbacks.push(callback);
   }
 
-  public async sendMessage(content: string, senderId: string, senderName: string, file?: File | null): Promise<ChatMessage> {
-    if (!this.currentRoomId) {
-      throw new Error('Cannot send message: No active room selected.');
+  public onSubscribed(callback: (roomId: string) => void): void {
+    this.subscribedCallbacks.push(callback);
+  }
+
+  public onUnsubscribed(callback: (roomId: string) => void): void {
+    this.unsubscribedCallbacks.push(callback);
+  }
+
+  public onSubscriptionError(callback: (roomId: string, error: Error) => void): void { // Added method
+    this.subscriptionErrorCallbacks.push(callback);
+  }
+
+  public onDisconnected(callback: () => void): void {
+    this.disconnectedCallbacks.push(callback);
+  }
+
+  public async sendMessage(roomId: string, content: string, senderId: string, senderName: string, file?: File | null): Promise<ChatMessage> {
+    if (!roomId) { // Check the passed roomId
+      throw new Error('Cannot send message: No active room selected. Please select a room first.');
     }
     if (!senderId || !senderName) {
       throw new Error('Cannot send message: Sender information missing.');
@@ -243,42 +383,26 @@ export class ChatService {
     }
 
     const formData = new FormData();
-    // Make sure sender ID is clean (trimmed, no extra spaces)
     const cleanSenderId = senderId.trim();
     
     formData.append('senderId', cleanSenderId);
     formData.append('senderName', senderName);
-    // Only append content if it's not empty
     if (content) {
       formData.append('content', content);
     }
-    // Append file if it exists
     if (file) {
       formData.append('file', file, file.name);
     }
 
-    const url = `${this.apiBaseUrl}/api/rooms/${this.currentRoomId}/messages`;
-    console.log(`Sending message via POST to ${url}`);
+    const url = `${this.apiBaseUrl}/api/rooms/${roomId}/messages`; // Use passed roomId
+    console.log(`Sending message via POST to ${url} for room ${roomId}`);
 
     try {
-      // Ensure WebSocket is connected before sending HTTP request
-      if (!this.connection || this.connection.readyState !== WebSocket.OPEN) {
-        console.log("WebSocket connection not established, attempting to reconnect");
-        try {
-          await this.startConnection(this.currentUserId, senderName, this.currentRoomId);
-          console.log("Successfully established WebSocket connection before sending message");
-        } catch (wsError) {
-          console.warn("Failed to establish WebSocket connection, attempting to send message anyway", wsError);
-        }
-      }
-      
-      // Use the X-User-Id header format which is more likely to be properly handled by browsers
       console.log(`Setting X-User-Id header to: "${cleanSenderId}"`);
       
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          // Use standardized X- prefix header to avoid browser restrictions
           'X-User-Id': cleanSenderId
         },
         body: formData,
@@ -303,7 +427,7 @@ export class ChatService {
 
     } catch (error) {
       console.error('Error sending message via HTTP:', error);
-      throw error; // Re-throw the error to be caught by the component
+      throw error;
     }
   }
 
@@ -316,8 +440,16 @@ export class ChatService {
       return await response.json();
     } catch (error) {
       console.error('Error fetching chat history:', error);
-      return []; // Return empty array on error instead of throwing
+      return [];
     }
+  }
+
+  public getCurrentRoomId(): string | null {
+    return this.currentRoomId;
+  }
+
+  public getSubscribedRooms(): Set<string> {
+    return this.subscribedRooms;
   }
 }
 

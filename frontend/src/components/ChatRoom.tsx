@@ -9,13 +9,23 @@ interface ChatRoomProps {
 }
 
 const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
-  const { messages, sendMessage, connect, disconnect, isConnected, switchRoom, currentRoomId } = useChat();
+  const {
+    messagesByRoom, // Changed from messages
+    sendMessage,
+    connect,
+    disconnect,
+    isConnected,
+    currentRoomId,
+    markRoomAsRead
+  } = useChat();
   const [messageInput, setMessageInput] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const initialConnectionMade = useRef(false);
-  const switchingInProgress = useRef(false);
+
+  // Derive messages for the current room this component instance is for
+  const currentRoomMessages = messagesByRoom[room] || [];
 
   // Connect to WebSocket when component mounts - only once
   useEffect(() => {
@@ -24,7 +34,7 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
         if (!isConnected && !initialConnectionMade.current) {
           console.log(`Initial connection as ${username} (${userId})`);
           initialConnectionMade.current = true;
-          await connect(userId, username);
+          await connect(userId, username); 
         }
       } catch (error) {
         console.error('Failed to connect:', error);
@@ -35,38 +45,33 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
 
     // Only disconnect when component unmounts completely
     return () => {
-      // We don't want to disconnect on every render or room change
       if (document.visibilityState === 'hidden') {
-        disconnect();
+        // disconnect(); // Decided to keep connection persistent as per requirements
       }
     };
   }, [username, userId, connect, disconnect, isConnected]);
 
-  // Handle room changes efficiently
+  // Handle room changes: react when this room becomes the active one
   useEffect(() => {
-    if (switchingInProgress.current || !isConnected) return;
+    // This effect runs when this ChatRoom's props (like 'room') or context values change.
+    // 'room' is the specific room this instance of ChatRoom is for.
+    // 'currentRoomId' is the globally active room ID from context.
 
-    const handleRoomChange = async () => {
-      // Only switch rooms if necessary
-      if (room !== currentRoomId) {
-        console.log(`Room switching needed - prop: ${room}, context: ${currentRoomId}`);
-        switchingInProgress.current = true;
-        
-        try {
-          await switchRoom(room);
-        } finally {
-          switchingInProgress.current = false;
-        }
-      }
-    };
-
-    handleRoomChange();
-  }, [room, switchRoom, isConnected, currentRoomId]);
+    if (isConnected && room === currentRoomId) {
+      // If this ChatRoom instance is for the currently active room
+      console.log(`ChatRoom (${room}): Is the active room. Marking as read.`);
+      markRoomAsRead(room);
+      // History loading is primarily handled by ChatContext when currentRoomId changes or on successful subscription.
+    }
+    // ChatRoom should not fight for who is the currentRoomId.
+    // It just reacts to being the currentRoomId.
+    // The component initiating the room change (e.g., Sidebar) is responsible for calling context.setCurrentRoomId.
+  }, [room, isConnected, currentRoomId, markRoomAsRead]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [currentRoomMessages]); // Changed from messages to currentRoomMessages
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files[0]) {
@@ -89,7 +94,8 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
     e.preventDefault();
     if (messageInput.trim() || selectedFile) {
       try {
-        await sendMessage(messageInput.trim(), selectedFile, userId);
+        // sendMessage in context now infers userId and currentRoomId and takes an object
+        await sendMessage({ content: messageInput.trim(), file: selectedFile });
         setMessageInput('');
         clearAttachment();
       } catch (error) {
@@ -97,9 +103,6 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
       }
     }
   };
-
-  // Only render messages from the selected room
-  const filteredMessages = messages.filter(message => message.chatId === room);
 
   return (
     <div className="chat-room">
@@ -109,20 +112,21 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
           <span className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
             {isConnected ? '●' : '○'}
           </span>
-          {room === currentRoomId ? null : 
+          {isConnected && room !== currentRoomId && (
             <span className="room-status switching">Syncing...</span>
-          }
+          )}
         </div>
       </div>
       
       <div className="chat-main">
         <div className="message-list">
-          {filteredMessages.length === 0 ? (
+          {/* Display messages if this room is the active one AND messages for this room exist */}
+          {room === currentRoomId && currentRoomMessages.length === 0 ? (
             <div className="empty-chat">
               <p>No messages yet in #{room}. Be the first to say hello!</p>
             </div>
-          ) : (
-            filteredMessages.map((message) => (
+          ) : room === currentRoomId ? (
+            currentRoomMessages.map((message) => (
               <div 
                 key={message.id} 
                 className={`message ${message.senderId === userId ? 'own-message' : ''}`}
@@ -145,7 +149,7 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
                 </div>
               </div>
             ))
-          )}
+          ) : null}
           <div ref={messagesEndRef} />
         </div>
         
@@ -163,7 +167,7 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
             onChange={handleFileChange} 
             style={{ display: 'none' }} 
           />
-          <button type="button" onClick={triggerFileInput} className="attach-btn" title="Attach file" disabled={!isConnected}>
+          <button type="button" onClick={triggerFileInput} className="attach-btn" title="Attach file" disabled={!isConnected || room !== currentRoomId}>
             📎
           </button>
           <input
@@ -172,9 +176,9 @@ const ChatRoom = ({ username, userId, room }: ChatRoomProps) => {
             onChange={(e) => setMessageInput(e.target.value)}
             placeholder={`Type a message or attach a file in #${room}...`}
             autoFocus
-            disabled={!isConnected}
+            disabled={!isConnected || room !== currentRoomId} // Disable if not connected or not the active room
           />
-          <button type="submit" disabled={(!messageInput.trim() && !selectedFile) || !isConnected}>
+          <button type="submit" disabled={(!messageInput.trim() && !selectedFile) || !isConnected || room !== currentRoomId}>
             Send
           </button>
         </form>

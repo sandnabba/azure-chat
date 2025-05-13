@@ -133,6 +133,42 @@ li.active .delete-channel-button:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex-grow: 1; /* Allow channel name to take available space */
+}
+
+.indicators-container {
+  display: flex;
+  align-items: center;
+  gap: 5px; /* Space between multiple indicators */
+  margin-left: 8px; /* Space from the channel name */
+}
+
+.unread-indicator {
+  background-color: #e74c3c; /* Red for unread */
+  color: white;
+  font-size: 0.7rem;
+  font-weight: bold;
+  padding: 2px 5px;
+  border-radius: 10px;
+  line-height: 1;
+  min-width: 18px; /* Ensure consistent width for single digit or 9+ */
+  text-align: center;
+}
+
+.subscribe-indicator {
+  color: #f39c12; /* Orange for not subscribed */
+  font-size: 0.9rem;
+  font-weight: bold;
+  padding: 0 3px;
+  border-radius: 50%;
+  border: 1px solid #f39c12;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  box-sizing: border-box;
 }
 
 .active-users {

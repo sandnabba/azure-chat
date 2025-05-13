@@ -1,21 +1,22 @@
 export interface ChatMessage {
   id: string;
-  chatId: string;
+  roomId: string; // Changed from chatId to roomId for consistency
   senderId: string;
   senderName: string;
-  content?: string; // Make content optional
+  content?: string; 
   timestamp: string;
-  type?: 'text' | 'file'; // Type can be text or file
+  type?: 'text' | 'file' | 'user_joined' | 'user_left' | 'system'; // Added more types for clarity
   attachments?: {
     url: string;
     type: string;
     name: string;
   }[];
-  attachmentUrl?: string; // Add URL for the uploaded file
-  attachmentFilename?: string; // Add original filename
+  attachmentUrl?: string; 
+  attachmentFilename?: string; 
 }
 
-export interface ChatUser {
+// Renamed ChatUser to User for consistency with Context
+export interface User {
   id: string;
   username: string;
   isActive?: boolean;
