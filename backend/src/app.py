@@ -34,7 +34,8 @@ db = CosmosDBConnection()
 storage_service = AzureStorageService()
 
 # Store active connections
-active_connections: Dict[str, Dict[str, WebSocket]] = {}  # chatId -> {userId: websocket}
+active_connections: Dict[str, WebSocket] = {}  # userId -> websocket
+user_subscriptions: Dict[str, List[str]] = {}  # userId -> List[roomId]
 active_users: Dict[str, User] = {}  # userId -> User
 
 # Authentication models
@@ -208,13 +209,20 @@ async def send_message(
     print(f"Using effective user ID: {effective_user_id}")
     print(f"Form data senderId: {senderId}")
     
-    # Auto-register the user if they don't exist yet
+    # Verify the user exists - check database if not in active_users
     if effective_user_id not in active_users:
-        active_users[effective_user_id] = User(
-            id=effective_user_id,
-            username=effective_user_id
-        )
-        print(f"Auto-registered user from HTTP request: {effective_user_id}")
+        # Try to find user in database
+        print(f"User {effective_user_id} not found in active_users, checking database...")
+        db_user = await db.get_user_by_id(effective_user_id)
+        
+        if db_user:
+            # User found in database, add to active_users
+            print(f"User {effective_user_id} found in database: {db_user.username}")
+            active_users[effective_user_id] = db_user
+        else:
+            # User not found in database either, reject request
+            print(f"HTTP request rejected: User {effective_user_id} not registered")
+            raise HTTPException(status_code=401, detail="Unauthorized: User not registered")
     
     # Check if senderId matches the effective_user_id header
     if effective_user_id != senderId:
@@ -243,11 +251,16 @@ async def send_message(
         raise HTTPException(status_code=400, detail="Message must have content or an attachment.")
 
     # Create message object
+    # Use the sender's username from active_users, not what was submitted in the form
+    user_info = active_users.get(effective_user_id)
+    if not user_info:
+        raise HTTPException(status_code=401, detail="User not found in active users")
+    
     message = ChatMessage(
         id=str(uuid.uuid4()),
         chatId=room_id,
         senderId=senderId,
-        senderName=senderName,
+        senderName=user_info.username,  # Use username from active_users
         content=content,
         timestamp=datetime.utcnow().isoformat(),
         type="file" if attachment_url else "text",
@@ -258,21 +271,19 @@ async def send_message(
     # Save to database
     saved_message = await db.create_message(message)
     
-    # Broadcast message via WebSocket
-    if room_id in active_connections:
-        print(f"Broadcasting message to room {room_id}")
-        broadcast_payload = {
-            "type": "message",
-            "data": saved_message.dict()
-        }
-        for client_id, connection in active_connections[room_id].items():
+    # Broadcast message via WebSocket to subscribed users
+    print(f"Broadcasting HTTP message to room {room_id}")
+    broadcast_payload = {
+        "type": "message",
+        "data": saved_message.dict()
+    }
+    for user_id_in_room, subscribed_rooms in user_subscriptions.items():
+        if room_id in subscribed_rooms and user_id_in_room in active_connections:
             try:
-                await connection.send_json(broadcast_payload)
-                print(f"Sent message to client {client_id}")
+                await active_connections[user_id_in_room].send_json(broadcast_payload)
+                print(f"Sent HTTP message to client {user_id_in_room} for room {room_id}")
             except Exception as e:
-                print(f"Error sending message to client {client_id}: {e}")
-    else:
-        print(f"No active WebSocket connections found for room {room_id} to broadcast message.")
+                print(f"Error sending HTTP message to client {user_id_in_room}: {e}")
 
     return saved_message
 
@@ -340,6 +351,7 @@ async def login_user(login_data: UserLogin):
     
     # Add to active users
     active_users[user.id] = user
+    print(f"👤 USER LOGIN: {user.username} (ID: {user.id})")
     
     # Return user data (excluding password)
     return UserResponse(
@@ -433,95 +445,213 @@ async def verify_email_redirect(token: str):
         # Redirect to frontend with error parameter
         return RedirectResponse(f"{frontend_url}/?verification=error&reason=server-error")
 
-@app.websocket("/ws/{room_id}/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, room_id: str, user_id: str):
-    # Auto-register the user if they don't exist
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    """
+    WebSocket endpoint that maintains a persistent connection with the client.
+    This implementation uses a single WebSocket connection per user (not per room),
+    allowing a user to receive messages from all rooms they're subscribed to.
+    """
+    # Check if user is registered - first check active_users, then database
     if user_id not in active_users:
-        # Create a temporary user with placeholder values for required fields
-        # These users are transient and can't login through normal authentication
-        active_users[user_id] = User(
-            id=user_id,
-            username=user_id,
-            email=f"{user_id}@temporary.chat",  # Add placeholder email
-            password="temp_not_usable_password",  # Add placeholder password (not hash)
-            email_confirmed=True  # Mark as confirmed so it doesn't trigger verification
-        )
-        print(f"Auto-registered temporary user for WebSocket: {user_id}")
+        # Try to find user in database
+        print(f"User {user_id} not found in active_users, checking database...")
+        db_user = await db.get_user_by_id(user_id)
+        
+        if db_user:
+            # User found in database, add to active_users
+            print(f"User {user_id} found in database: {db_user.username}")
+            active_users[user_id] = db_user
+        else:
+            # User not found in database either, reject connection
+            print(f"WebSocket connection rejected for unregistered user: {user_id}")
+            return await websocket.close(code=4001, reason="Unauthorized: User not registered")
     
+    # Get the user information from active_users
+    user_info = active_users[user_id]
+    print(f"User {user_id} found: {user_info.username}")
+        
     await websocket.accept()
-    print(f"WebSocket connection accepted for {user_id} in room {room_id}")
+    print(f"WebSocket connection accepted for user: {user_id}")
+    active_connections[user_id] = websocket
     
-    # Add connection to active connections
-    if room_id not in active_connections:
-        active_connections[room_id] = {}
-    active_connections[room_id][user_id] = websocket
-    print(f"Current active connections for room {room_id}: {list(active_connections[room_id].keys())}")
+    # Also send a broadcast of already connected users to the newly connected user
+    print(f"Sending active users list to newly connected user {user_id}")
     
-    # Notify others that user has joined
-    for client_id, connection in active_connections[room_id].items():
-        if client_id != user_id:
+    # Send a simple "user_online" notification to all connected users about this user
+    user_info = active_users[user_id]
+    user_online_notification = {
+        "type": "user_online",
+        "userId": user_id,
+        "username": user_info.username
+    }
+    
+    # Send to all connected users (including self)
+    for connected_user_id, conn in active_connections.items():
+        try:
+            await conn.send_json(user_online_notification)
+            print(f"Sent online status notification about {user_id} ({user_info.username}) to {connected_user_id}")
+        except Exception as e:
+            print(f"Error sending online status notification to {connected_user_id}: {e}")
+    
+    # Send notifications about all existing online users to the newly connected user
+    for existing_user_id, existing_user in active_users.items():
+        if existing_user_id != user_id and existing_user_id in active_connections:
+            # For each existing active user, send an online notification to the new user
+            existing_user_online = {
+                "type": "user_online",
+                "userId": existing_user_id,
+                "username": existing_user.username
+            }
             try:
-                await connection.send_json({
-                    "type": "user_joined",
-                    "username": user_id
-                })
+                await websocket.send_json(existing_user_online)
+                print(f"Sent existing user online status to {user_id} about {existing_user_id}")
             except Exception as e:
-                print(f"Error notifying client {client_id}: {e}")
+                print(f"Error sending existing user online status to {user_id}: {e}")
     
+    # Initialize user subscriptions if not existing
+    if user_id not in user_subscriptions:
+        user_subscriptions[user_id] = []
+    
+    # Auto-subscribe the user to all existing rooms
+    try:
+        rooms = await db.get_chat_rooms()
+        if not rooms:
+            # Ensure there's at least a general room
+            general_room = ChatRoom(
+                id="general",
+                name="General",
+                description="Public chat room for everyone"
+            )
+            await db.create_chat_room(general_room)
+            rooms = [general_room]            # Subscribe to all rooms automatically
+        for room in rooms:
+            if room.id not in user_subscriptions[user_id]:
+                user_subscriptions[user_id].append(room.id)
+                print(f"Auto-subscribed user {user_id} to room {room.id}")
+                
+                # No need to send per-room join notifications anymore
+                # User's online status is already sent with "user_online" notification
+                
+        # Send subscription acknowledgement for all rooms at once
+        await websocket.send_json({
+            "type": "subscriptions_ack", 
+            "rooms": [room.id for room in rooms],
+            "status": "subscribed"
+        })
+    except Exception as e:
+        print(f"Error auto-subscribing user {user_id} to rooms: {e}")
+
     try:
         while True:
             data = await websocket.receive_text()
             print(f"Received raw data from {user_id}: {data}")
-            
-            try:
-                message_data = json.loads(data)
-                if message_data.get("type") == "message" and "data" in message_data:
-                    msg_content = message_data["data"]
-                    if msg_content.get("content") and not msg_content.get("attachmentUrl"):
-                        message = ChatMessage(
-                            id=str(uuid.uuid4()),
-                            chatId=room_id,
-                            senderId=user_id,
-                            senderName=active_users.get(user_id, User(id=user_id, username=user_id, email=f"{user_id}@temporary.chat", password="temp_not_usable_password")).username,
-                            content=msg_content.get("content"),
-                            timestamp=datetime.utcnow().isoformat(),
-                            type="text"
-                        )
-                        
-                        await db.create_message(message)
-                        
-                        broadcast_payload = {"type": "message", "data": message.dict()}
-                        for client_id, connection in active_connections.get(room_id, {}).items():
-                            try:
-                                await connection.send_json(broadcast_payload)
-                            except Exception as e:
-                                print(f"Error broadcasting text message to {client_id}: {e}")
-                    else:
-                        print(f"Received non-text message or message with attachment via WS from {user_id}, ignoring. Use HTTP POST for uploads.")
-                else:
-                    print(f"Received non-message type data from {user_id}: {message_data.get('type')}")
+            message_data = json.loads(data)
+            msg_type = message_data.get("type")
 
-            except json.JSONDecodeError:
-                print(f"Invalid JSON received from {user_id}")
-            except Exception as e:
-                print(f"Error processing WebSocket message from {user_id}: {e}")
+            if msg_type == "message":
+                msg_content_data = message_data.get("data", {})
+                room_id = msg_content_data.get("chatId")
+
+                if not room_id:
+                    await websocket.send_json({"type": "error", "message": "chatId missing in message data"})
+                    continue
+                
+                # Ensure senderName is correctly fetched
+                sender_user_info = active_users.get(user_id)
+                if sender_user_info is None:
+                    # Try to find user in database
+                    print(f"User {user_id} not found in active_users when sending message, checking database...")
+                    db_user = await db.get_user_by_id(user_id)
                     
+                    if db_user:
+                        # User found in database, add to active_users
+                        print(f"User {user_id} found in database when sending message: {db_user.username}")
+                        active_users[user_id] = db_user
+                        sender_user_info = db_user
+                    else:
+                        # User not found in database either, reject message
+                        error_msg = {"type": "error", "message": "Unauthorized: User not registered"}
+                        await websocket.send_json(error_msg)
+                        print(f"Rejected message from unregistered user: {user_id}")
+                        continue
+                
+                sender_name = sender_user_info.username
+
+                # Process only text messages via WebSocket, attachments should go via HTTP
+                if msg_content_data.get("content") and not msg_content_data.get("attachmentUrl"):
+                    message = ChatMessage(
+                        id=str(uuid.uuid4()),
+                        chatId=room_id,
+                        senderId=user_id,
+                        senderName=sender_name, # Use fetched sender_name
+                        content=msg_content_data.get("content"),
+                        timestamp=datetime.utcnow().isoformat(),
+                        type="text"
+                    )
+                    await db.create_message(message)
+                    
+                    broadcast_payload = {"type": "message", "data": message.dict()}
+                    # Send to all connected users (they will filter by room in frontend)
+                    for conn_user_id, conn in active_connections.items():
+                        try:
+                            await conn.send_json(broadcast_payload)
+                        except Exception as e:
+                            print(f"Error broadcasting WS message to {conn_user_id} in room {room_id}: {e}")
+                else:
+                    print(f"Received WS message from {user_id} for room {room_id} without content or with attachment, ignoring.")
+                    await websocket.send_json({"type": "error", "message": "WebSocket messages should be text-only; use HTTP POST for attachments."})
+            
+            else:
+                print(f"Received unknown message type '{msg_type}' from {user_id}")
+                await websocket.send_json({"type": "error", "message": f"Unknown message type: {msg_type}"})
+
     except WebSocketDisconnect:
-        if room_id in active_connections and user_id in active_connections[room_id]:
-            del active_connections[room_id][user_id]
-            if not active_connections[room_id]:
-                del active_connections[room_id]
-            
-            for client_id, connection in active_connections.get(room_id, {}).items():
-                try:
-                    await connection.send_json({
-                        "type": "user_left",
-                        "username": user_id
-                    })
-                except:
-                    pass
-            
-            print(f"WebSocket connection closed for {user_id} in room {room_id}")
+        print(f"WebSocket connection closed for user: {user_id}")
+    except json.JSONDecodeError:
+        print(f"Invalid JSON received from {user_id}, closing connection.")
+        if user_id in active_connections: # Ensure connection exists before trying to close
+             await active_connections[user_id].close(code=1003) # 1003: unsupported data
+    except Exception as e:
+        print(f"Error in WebSocket handler for {user_id}: {e}")
+        if user_id in active_connections: # Ensure connection exists
+            try:
+                await active_connections[user_id].close(code=1011) # 1011: internal server error
+            except Exception as close_e:
+                print(f"Error trying to close WebSocket for {user_id} after an error: {close_e}")
+    finally:
+        if user_id in active_connections:
+            del active_connections[user_id]
+        
+        disconnected_user_info = active_users.get(user_id)
+        if not disconnected_user_info:
+            # If user not found, skip sending offline notifications
+            print(f"User {user_id} not found in active_users during disconnect cleanup, skipping offline notification.")
+            return
+        else:
+            # Also remove the user from active_users list since they've disconnected
+            if user_id in active_users:
+                del active_users[user_id]
+                print(f"Removed user {user_id} from active_users list")
+
+        # Notify all remaining users about this user going offline
+        user_offline_notification = {
+            "type": "user_offline",
+            "userId": user_id,
+            "username": disconnected_user_info.username
+        }
+        
+        for other_user_id, other_ws in active_connections.items():
+            try:
+                await other_ws.send_json(user_offline_notification)
+                print(f"Sent offline notification to {other_user_id} about {user_id} ({disconnected_user_info.username})")
+            except Exception as e:
+                print(f"Error sending offline notification to {other_user_id}: {e}")
+                
+        if user_id in user_subscriptions:
+            del user_subscriptions[user_id]
+        print(f"Cleaned up resources for disconnected user {user_id}")
+        
 
 @app.on_event("startup")
 async def startup_event():

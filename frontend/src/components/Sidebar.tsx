@@ -6,8 +6,8 @@ import DeleteChannelModal from './DeleteChannelModal';
 import { getApiBaseUrl } from '../utils/apiUrls';
 
 interface SidebarProps {
-  selectedRoom: string;
-  onSelectRoom: (room: string) => void;
+  selectedRoom: string; // Prop passed from App.tsx
+  onSelectRoom: (roomId: string) => void; // Callback to update App.tsx's selectedRoom state
 }
 
 interface ChatRoomData {
@@ -17,31 +17,29 @@ interface ChatRoomData {
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
-  const { activeUsers } = useChat(); // Get activeUsers from ChatContext
+  const {
+    currentRoomId,
+    setCurrentRoomId,
+    unreadMessages,
+    activeUsers
+  } = useChat();
   const [rooms, setRooms] = useState<ChatRoomData[]>([]);
   const [isAddChannelModalOpen, setIsAddChannelModalOpen] = useState(false);
   const [isDeleteChannelModalOpen, setIsDeleteChannelModalOpen] = useState(false);
   const [channelToDelete, setChannelToDelete] = useState<ChatRoomData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [refreshTrigger, setRefreshTrigger] = useState(0); // To force refresh
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
 
-  // Use the centralized utility to get API URL, just like the rest of the application
   const apiUrl = getApiBaseUrl();
 
-  // Fetch rooms from server with better error handling
   const fetchRooms = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    
     try {
-      // Get server data
       const response = await fetch(`${apiUrl}/api/rooms`);
       if (response.ok) {
         const serverData = await response.json();
-        console.log('Fetched channels from server:', serverData);
-        
-        // Ensure "general" channel is always present
         if (!serverData.some((room: ChatRoomData) => room.id === 'general')) {
           serverData.push({
             id: 'general',
@@ -49,112 +47,69 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
             description: 'Public chat room for everyone'
           });
         }
-        
-        // Sort channels alphabetically, but keep general first
         serverData.sort((a: ChatRoomData, b: ChatRoomData) => {
           if (a.id === 'general') return -1;
           if (b.id === 'general') return 1;
           return a.name.localeCompare(b.name);
         });
-        
-        // Update state
         setRooms(serverData);
-        
-        // Select first room if none selected
-        if (!selectedRoom && serverData.length > 0) {
-          onSelectRoom(serverData[0].id);
+        if (!currentRoomId && serverData.length > 0) {
+          setCurrentRoomId(serverData[0].id);
         }
       } else {
         console.error('Failed to fetch rooms:', response.statusText);
         setError('Failed to load chat rooms from server');
-        
-        // Fallback to just having general
-        const generalOnly = [{
-          id: 'general',
-          name: 'General',
-          description: 'Public chat room for everyone'
-        }];
+        const generalOnly = [{ id: 'general', name: 'General', description: 'Public chat room for everyone' }];
         setRooms(generalOnly);
-        onSelectRoom('general');
+        if (!currentRoomId) setCurrentRoomId('general');
       }
     } catch (error) {
       console.error('Error fetching rooms:', error);
       setError('Error connecting to server');
-      
-      // Last-resort fallback
-      const generalOnly = [{
-        id: 'general',
-        name: 'General',
-        description: 'Public chat room for everyone'
-      }];
+      const generalOnly = [{ id: 'general', name: 'General', description: 'Public chat room for everyone' }];
       setRooms(generalOnly);
-      
-      if (!selectedRoom) {
-        onSelectRoom('general');
-      }
+      if (!currentRoomId) setCurrentRoomId('general');
     } finally {
       setIsLoading(false);
     }
-  }, [apiUrl, onSelectRoom, selectedRoom]);
+  }, [apiUrl, setCurrentRoomId, currentRoomId]);
 
-  // Initial load on component mount and when refresh is triggered
   useEffect(() => {
     fetchRooms();
   }, [fetchRooms, refreshTrigger]);
 
+  const handleSelectRoom = (roomId: string) => {
+    setCurrentRoomId(roomId); // Update context's currentRoomId
+    onSelectRoom(roomId);     // Update App.tsx's selectedRoom state
+  };
+
   const handleAddChannel = async (channelName: string, channelDescription: string) => {
     try {
-      // Create URL-friendly ID from name
       const channelId = channelName.toLowerCase().replace(/\s+/g, '-');
-      
-      // Check if channel already exists
-      const channelExists = rooms.some(room => room.id === channelId);
-      if (channelExists) {
+      if (rooms.some(room => room.id === channelId)) {
         throw new Error('A channel with this name already exists');
       }
+      const newChannel = { id: channelId, name: channelName, description: channelDescription || `${channelName} chat room` };
       
-      // Create the new channel object
-      const newChannel = {
-        id: channelId,
-        name: channelName,
-        description: channelDescription || `${channelName} chat room`
-      };
-      
-      // Add the new channel and sort properly
       const updatedRooms = [...rooms, newChannel].sort((a, b) => {
         if (a.id === 'general') return -1;
         if (b.id === 'general') return 1;
         return a.name.localeCompare(b.name);
       });
-      
-      // Update local state with sorted rooms (optimistic update)
       setRooms(updatedRooms);
-      
-      // Switch to the new room immediately
-      onSelectRoom(channelId);
-      
-      // Then persist to backend
+      setCurrentRoomId(channelId);
+
       const response = await fetch(`${apiUrl}/api/rooms`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newChannel),
       });
-
       if (!response.ok) {
         const errorData = await response.json();
-        console.warn('Error saving channel to server:', errorData.detail || response.statusText);
-        setError('Error saving channel to server');
+        setError(errorData.detail || 'Error saving channel to server');
         setTimeout(() => setError(null), 5000);
-        
-        // Refresh channels to ensure we're in sync with the server
         fetchRooms();
       } else {
-        console.log('Channel created successfully on server');
-        
-        // Refresh the channel list to ensure server and client are in sync
-        // This is especially important if the server modified any properties
         fetchRooms();
       }
     } catch (error) {
@@ -166,57 +121,45 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
 
   const handleDeleteChannel = async (channelId: string) => {
     try {
-      // Don't allow deletion of general channel
       if (channelId === 'general') {
         setError('The general channel cannot be deleted');
         setTimeout(() => setError(null), 5000);
         return;
       }
-      
-      // Delete the channel on the backend
-      const response = await fetch(`${apiUrl}/api/rooms/${channelId}`, {
-        method: 'DELETE',
-      });
-
+      const response = await fetch(`${apiUrl}/api/rooms/${channelId}`, { method: 'DELETE' });
       if (!response.ok) {
         const errorData = await response.json();
-        console.warn('Error deleting channel on server:', errorData.detail || response.statusText);
         throw new Error(errorData.detail || 'Error deleting channel');
       }
-      
-      console.log('Channel deleted successfully on server');
-      
-      // Update local state (remove the deleted channel)
       const updatedRooms = rooms.filter(room => room.id !== channelId);
       setRooms(updatedRooms);
-      
-      // If the deleted channel was the selected one, switch to general
-      if (selectedRoom === channelId) {
-        onSelectRoom('general');
+      if (currentRoomId === channelId) {
+        setCurrentRoomId('general');
       }
-      
-      // Refresh the channel list to ensure server and client are in sync
       fetchRooms();
     } catch (error) {
       console.error('Error deleting channel:', error);
       setError(error instanceof Error ? error.message : 'Unknown error deleting channel');
       setTimeout(() => setError(null), 5000);
-      throw error; // Re-throw to let the modal handle the error
+      throw error;
     }
   };
 
-  // Open delete confirmation modal
   const openDeleteModal = (room: ChatRoomData, e: React.MouseEvent) => {
-    e.stopPropagation(); // Prevent channel selection when clicking delete
+    e.stopPropagation();
     setChannelToDelete(room);
     setIsDeleteChannelModalOpen(true);
   };
 
-  // Refreshes the channel list from the server
   const handleRefreshChannels = useCallback(() => {
-    console.log('Refreshing channels list from server...');
-    setRefreshTrigger(prev => prev + 1); // This will trigger the useEffect
+    setRefreshTrigger(prev => prev + 1);
   }, []);
+
+  // Get all active users (global user presence model)
+  const allActiveUsers = React.useMemo(() => {
+    // Simply return the activeUsers array directly since we now use a global presence model
+    return activeUsers;
+  }, [activeUsers]);
 
   return (
     <div className="sidebar">
@@ -245,26 +188,39 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
         <div className="loading-indicator">Loading rooms...</div>
       ) : (
         <ul className="channel-list">
-          {rooms.map((room) => (
-            <li
-              key={room.id}
-              className={room.id === selectedRoom ? 'active' : ''}
-              onClick={() => onSelectRoom(room.id)}
-            >
-              <div className="channel-item">
-                <span className="channel-name"># {room.name || room.id}</span>
-                {room.id !== 'general' && (
-                  <button
-                    className="delete-channel-button"
-                    onClick={(e) => openDeleteModal(room, e)}
-                    title={`Delete ${room.name} channel`}
-                  >
-                    ×
-                  </button>
-                )}
-              </div>
-            </li>
-          ))}
+          {rooms.map((room) => {
+            const unreadCount = unreadMessages[room.id] || 0;
+            const hasUnread = unreadCount > 0 && room.id !== currentRoomId;
+
+            return (
+              <li
+                key={room.id}
+                className={`${room.id === currentRoomId ? 'active' : ''}`}
+                onClick={() => handleSelectRoom(room.id)}
+                title={room.name || room.id}
+              >
+                <div className="channel-item">
+                  <div className="channel-label">
+                    <span className="channel-hash">#</span>{room.name || room.id}
+                  </div>
+                  <div className="channel-actions">
+                    {hasUnread && (
+                      <span className="unread-indicator">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                    )}
+                    {room.id !== 'general' && (
+                      <button
+                        className="delete-channel-button"
+                        onClick={(e) => openDeleteModal(room, e)}
+                        title={`Delete ${room.name} channel`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </li>
+            );
+          })}
           {rooms.length === 0 && !error && (
             <li className="no-channels">No channels available</li>
           )}
@@ -272,13 +228,15 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
       )}
       
       <div className="active-users">
-        <h3>Active Users ({activeUsers.length})</h3>
+        <h3>Active Users ({allActiveUsers.length})</h3>
         <ul>
-          {activeUsers.map((user) => (
-            <li key={user}>{user}</li>
+          {allActiveUsers.map((user) => (
+            <li key={user.id} title={`User ID: ${user.id}`}>
+              {user.username}
+            </li>
           ))}
-          {activeUsers.length === 0 && (
-            <li className="no-users">No active users</li>
+          {allActiveUsers.length === 0 && (
+            <li className="no-users">No active users online</li>
           )}
         </ul>
       </div>

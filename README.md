@@ -67,5 +67,4 @@ This project does not cover Docker or basic container development. If you are ne
 * Investigate SignalR service.
 * Enable user-to-user messaging.
 * Make mobile friendly UI.
-* Make a persistent websocket (notifications for new messages in other channels).
 * Enable automatic login after email confirmation.

@@ -6,53 +6,58 @@ export class ChatService {
   private readonly apiBaseUrl: string;
   private readonly wsBaseUrl: string;
   private messageCallbacks: ((message: ChatMessage) => void)[] = [];
-  private userJoinedCallbacks: ((username: string) => void)[] = [];
-  private userLeftCallbacks: ((username: string) => void)[] = [];
+  private userJoinedRoomCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
+  private userWentOfflineCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
+  private disconnectedCallbacks: (() => void)[] = [];
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
-  private reconnectDelay = 2000; // 2 seconds initial delay
-  private reconnectTimeoutId: number | null = null;
-  private currentRoomId: string = 'general';
+  private maxReconnectAttempts = 5;
+  private reconnectDelay = 3000;
+  private reconnectTimeoutId: number | null = null; // Explicitly number for window.setTimeout
   private currentUsername: string = '';
   private currentUserId: string = '';
-  private roomChangeInProgress = false;
 
   constructor() {
-    // Use the centralized URL utilities instead of handling URL logic here
     this.apiBaseUrl = getApiBaseUrl();
     this.wsBaseUrl = getWebSocketBaseUrl();
-    
-    // Log the URLs for debugging
     logApiConfig();
   }
 
-  public async startConnection(userId: string, username: string, roomId: string = 'general'): Promise<void> {
-    // Reset reconnect attempts on new connection
+  public getUserId(): string | null {
+    return this.currentUserId;
+  }
+
+  public getCurrentUsername(): string | null {
+    return this.currentUsername;
+  }
+
+  public isConnected(): boolean {
+    return this.connection !== null && this.connection.readyState === WebSocket.OPEN;
+  }
+
+  public async startConnection(userId: string, username: string): Promise<void> {
     this.reconnectAttempts = 0;
-    
-    // Store current user and room
     this.currentUserId = userId;
     this.currentUsername = username;
-    this.currentRoomId = roomId;
 
     try {
-      // Close any existing connection first
       await this.cleanupExistingConnection();
 
-      // Create WebSocket URL with the specified room and userId
-      // Match the backend's pattern of /ws/{room_id}/{user_id}
-      const wsUrl = `${this.wsBaseUrl}/ws/${roomId}/${userId}`;
-      console.log(`Connecting to WebSocket at: ${wsUrl} (Username: ${username})`);
+      const wsUrl = `${this.wsBaseUrl}/ws/${userId}`;
+      console.log(`Connecting to WebSocket at: ${wsUrl} (User ID: ${userId}, Username: ${username})`);
 
+      // Create WebSocket with custom headers to authenticate the user
       this.connection = new WebSocket(wsUrl);
-
-      // Set up WebSocket event handlers with better error handling
+      
+      // Store these values for reference during the connection
+      this.currentUserId = userId;
+      this.currentUsername = username;
+      
+      // Set up event handlers
       this.connection.onopen = this.handleOpen.bind(this);
-      this.connection.onclose = this.handleClose.bind(this, userId);
+      this.connection.onclose = this.handleClose.bind(this);
       this.connection.onerror = this.handleError.bind(this);
       this.connection.onmessage = this.handleMessage.bind(this);
 
-      // Return a promise that resolves when the connection is open or rejects on error
       return new Promise((resolve, reject) => {
         if (!this.connection) {
           return reject(new Error('Connection not initialized'));
@@ -75,249 +80,326 @@ export class ChatService {
         this.connection.addEventListener('open', openHandler);
         this.connection.addEventListener('error', errorHandler);
 
-        // Add a timeout to prevent hanging if connection never establishes
         setTimeout(() => {
           if (this.connection?.readyState !== WebSocket.OPEN) {
             this.connection?.removeEventListener('open', openHandler);
             this.connection?.removeEventListener('error', errorHandler);
             reject(new Error('WebSocket connection timed out'));
           }
-        }, 10000); // 10 second timeout
+        }, 10000);
       });
     } catch (error) {
       console.error('Error connecting to WebSocket:', error);
+      this.scheduleReconnect();
       throw error;
     }
   }
 
-  /**
-   * Update the current room ID - for this backend implementation we need to reconnect
-   * to properly join a different room's WebSocket.
-   */
-  public async updateCurrentRoom(roomId: string): Promise<void> {
-    if (roomId === this.currentRoomId) {
-      return; // No change needed
-    }
-    
-    if (this.roomChangeInProgress) {
-      console.log('Room change already in progress, skipping');
-      return;
-    }
-
-    try {
-      this.roomChangeInProgress = true;
-      console.log(`Switching WebSocket connection from room ${this.currentRoomId} to ${roomId}`);
-      
-      // With the current backend implementation, we need to reconnect to a new WebSocket
-      // for each room to ensure messages are properly routed
-      await this.startConnection(this.currentUserId, this.currentUsername, roomId);
-      
-      console.log(`Successfully connected to new room: ${roomId}`);
-    } catch (error) {
-      console.error(`Error switching to room ${roomId}:`, error);
-      
-      // If reconnection fails, keep the current room
-      this.currentRoomId = roomId;
-    } finally {
-      this.roomChangeInProgress = false;
-    }
-  }
-
-  public async switchRoom(roomId: string): Promise<void> {
-    return this.updateCurrentRoom(roomId);
-  }
-
-  private handleOpen(event: Event) {
-    console.log(`Connected to WebSocket for room ${this.currentRoomId}!`, event);
-    // Reset reconnect attempts on successful connection
-    this.reconnectAttempts = 0;
-  }
-
-  private handleClose(userId: string, event: CloseEvent) {
-    console.log(`Disconnected from WebSocket service. Code: ${event.code} Reason: ${event.reason}`);
-
-    // Only try to reconnect on abnormal closure and if we haven't exceeded max attempts
-    if (event.code === 1006 && this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.scheduleReconnect(userId);
-    }
-  }
-
-  private handleError(event: Event) {
-    console.error('WebSocket Error:', event);
-  }
-
-  private handleMessage(event: MessageEvent) {
-    try {
-      const message = JSON.parse(event.data);
-      console.log('Received WebSocket message:', message);
-
-      // Handle different message types
-      if (message.type === 'message' && message.data) {
-        // Ensure the message has the correct room ID
-        if (message.data.chatId && message.data.chatId !== this.currentRoomId) {
-          console.log(`Warning: Received message for room ${message.data.chatId} but we're in ${this.currentRoomId}`);
-        }
-        
-        this.messageCallbacks.forEach(callback => callback(message.data));
-      } else if (message.type === 'user_joined') {
-        this.userJoinedCallbacks.forEach(callback => callback(message.username));
-      } else if (message.type === 'user_left') {
-        this.userLeftCallbacks.forEach(callback => callback(message.username));
-      }
-    } catch (error) {
-      console.error('Error parsing WebSocket message:', error, event.data);
-    }
-  }
-
   private async cleanupExistingConnection(): Promise<void> {
-    // Clear any pending reconnect attempts
-    if (this.reconnectTimeoutId !== null) {
-      clearTimeout(this.reconnectTimeoutId);
-      this.reconnectTimeoutId = null;
-    }
-
-    // Close existing connection if any
     if (this.connection) {
-      // Remove all event listeners to prevent potential memory leaks
+      console.log('Cleaning up existing connection before creating a new one');
+      
+      // Remove event handlers to prevent duplicate handlers
       this.connection.onopen = null;
       this.connection.onclose = null;
       this.connection.onerror = null;
       this.connection.onmessage = null;
-
-      // Only close if not already closed
-      if (this.connection.readyState !== WebSocket.CLOSED &&
-          this.connection.readyState !== WebSocket.CLOSING) {
-        try {
-          this.connection.close();
-        } catch (e) {
-          console.error('Error closing existing connection:', e);
+      
+      try {
+        if (this.connection.readyState === WebSocket.OPEN || this.connection.readyState === WebSocket.CONNECTING) {
+          // Close the connection gracefully if possible
+          this.connection.close(1000, 'Normal closure, replacing connection');
         }
+      } catch (e) {
+        console.warn('Error closing existing connection:', e);
       }
+      
+      // Clear the reference
       this.connection = null;
+      
+      // Give the browser a moment to clean up the old connection
+      // without delaying too much
+      await new Promise(resolve => setTimeout(resolve, 100));
     }
   }
 
-  private scheduleReconnect(userId: string): void {
-    this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1); // Exponential backoff
-
-    console.log(`Scheduling reconnect attempt ${this.reconnectAttempts} in ${delay}ms...`);
-
-    this.reconnectTimeoutId = window.setTimeout(async () => {
-      console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-      try {
-        await this.startConnection(userId, this.currentUsername, this.currentRoomId);
-        console.log('Reconnection successful!');
-      } catch (error) {
-        console.error('Reconnection failed:', error);
-      }
-    }, delay);
-  }
-
   public async stopConnection(): Promise<void> {
+    if (this.reconnectTimeoutId !== null) {
+      window.clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+    
+    // If we have an open connection, gracefully close it
+    if (this.connection && this.connection.readyState === WebSocket.OPEN) {
+      console.log('Sending explicit logout notification before closing');
+      
+      // Send a clean closure frame after a small delay to ensure the frame gets sent
+      try {
+        this.connection.close(1000, "User logged out");
+      } catch (e) {
+        console.warn('Error during explicit connection close:', e);
+      }
+    }
+    
     await this.cleanupExistingConnection();
-    console.log('Connection stopped');
+    console.log('WebSocket connection stopped');
   }
 
+  public async sendMessage(
+    roomId: string, 
+    content: string, 
+    userId: string, 
+    username: string,
+    file?: File
+  ): Promise<void> {
+    if (!this.isConnected()) {
+      console.error('Cannot send message, WebSocket not connected');
+      throw new Error('WebSocket not connected');
+    }
+
+    if (file) {
+      // Use HTTP POST for messages with attachments
+      const formData = new FormData();
+      formData.append('content', content);
+      formData.append('senderId', userId);
+      formData.append('senderName', username);
+      formData.append('file', file);
+
+      try {
+        const response = await fetch(`${this.apiBaseUrl}/api/rooms/${roomId}/messages`, {
+          method: 'POST',
+          headers: {
+            // Add user ID as header for authentication
+            'X-User-Id': userId
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ detail: 'Unknown error occurred' }));
+          throw new Error(`Failed to send message: ${errorData.detail || response.statusText}`);
+        }
+      } catch (error) {
+        console.error('Error sending message with file:', error);
+        throw error;
+      }
+    } else {
+      // Use WebSocket for text-only messages
+      try {
+        const messageData = {
+          type: 'message',
+          data: {
+            chatId: roomId,
+            senderId: userId,
+            senderName: username,
+            content: content
+          }
+        };
+        
+        this.connection?.send(JSON.stringify(messageData));
+      } catch (error) {
+        console.error('Error sending message:', error);
+        throw error;
+      }
+    }
+  }
+
+  public async fetchChatHistory(roomId: string): Promise<ChatMessage[]> {
+    try {
+      const response = await fetch(`${this.apiBaseUrl}/api/rooms/${roomId}/history`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch history: ${response.statusText}`);
+      }
+      const history = await response.json();
+      console.log(`Fetched ${history.length} messages for room ${roomId}`);
+      return history;
+    } catch (error) {
+      console.error(`Error fetching history for ${roomId}:`, error);
+      throw error;
+    }
+  }
+
+  // Register callbacks
   public onReceiveMessage(callback: (message: ChatMessage) => void): void {
     this.messageCallbacks.push(callback);
   }
 
-  public onUserJoined(callback: (username: string) => void): void {
-    this.userJoinedCallbacks.push(callback);
+  /**
+   * Register a callback function to be called when a user comes online
+   * With the global presence model, this is called for any user that connects to the chat
+   */
+  public onUserCameOnline(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    // Register callback for global user presence
+    this.userJoinedRoomCallbacks.push(callback);
   }
 
-  public onUserLeft(callback: (username: string) => void): void {
-    this.userLeftCallbacks.push(callback);
+  // Keeping the old method name for backward compatibility
+  public onUserJoinedRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    return this.onUserCameOnline(callback);
   }
 
-  public async sendMessage(content: string, senderId: string, senderName: string, file?: File | null): Promise<ChatMessage> {
-    if (!this.currentRoomId) {
-      throw new Error('Cannot send message: No active room selected.');
-    }
-    if (!senderId || !senderName) {
-      throw new Error('Cannot send message: Sender information missing.');
-    }
-    if (!content && !file) {
-      throw new Error('Cannot send message: Message must have content or a file.');
-    }
+  /**
+   * Register a callback function to be called when a user leaves the chat
+   * With the global presence model, this is called for any user that goes offline
+   */
+  public onUserWentOffline(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    // Register callback for user presence (global)
+    this.userWentOfflineCallbacks.push(callback);
+  }
 
-    const formData = new FormData();
-    // Make sure sender ID is clean (trimmed, no extra spaces)
-    const cleanSenderId = senderId.trim();
+  public onDisconnected(callback: () => void): void {
+    this.disconnectedCallbacks.push(callback);
+  }
+
+  // Event handlers
+  private handleOpen(event: Event): void {
+    console.log('WebSocket connection opened:', event);
+    this.reconnectAttempts = 0;
+  }
+
+  private handleClose(event: CloseEvent): void {
+    console.log(`WebSocket connection closed: ${event.code} - ${event.reason || 'No reason provided'}`);
     
-    formData.append('senderId', cleanSenderId);
-    formData.append('senderName', senderName);
-    // Only append content if it's not empty
-    if (content) {
-      formData.append('content', content);
+    // Handle authentication failures - 4001 is our custom code for unauthorized users
+    if (event.code === 4001) {
+      console.error('Authentication failed:', event.reason);
+      // Clear local storage to force re-login
+      localStorage.removeItem('chatUsername');
+      localStorage.removeItem('chatUserId');
+      // Don't try to reconnect for auth failures
+      window.location.reload(); // Force page reload to show login screen
+      return;
     }
-    // Append file if it exists
-    if (file) {
-      formData.append('file', file, file.name);
-    }
-
-    const url = `${this.apiBaseUrl}/api/rooms/${this.currentRoomId}/messages`;
-    console.log(`Sending message via POST to ${url}`);
-
-    try {
-      // Ensure WebSocket is connected before sending HTTP request
-      if (!this.connection || this.connection.readyState !== WebSocket.OPEN) {
-        console.log("WebSocket connection not established, attempting to reconnect");
-        try {
-          await this.startConnection(this.currentUserId, senderName, this.currentRoomId);
-          console.log("Successfully established WebSocket connection before sending message");
-        } catch (wsError) {
-          console.warn("Failed to establish WebSocket connection, attempting to send message anyway", wsError);
-        }
+    
+    // Notify all disconnect listeners
+    this.disconnectedCallbacks.forEach(callback => {
+      try {
+        callback();
+      } catch (e) {
+        console.error('Error in disconnect callback:', e);
       }
-      
-      // Use the X-User-Id header format which is more likely to be properly handled by browsers
-      console.log(`Setting X-User-Id header to: "${cleanSenderId}"`);
-      
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          // Use standardized X- prefix header to avoid browser restrictions
-          'X-User-Id': cleanSenderId
-        },
-        body: formData,
-      });
-
-      if (!response.ok) {
-        let errorDetail = 'Unknown error';
-        try {
-          const errorText = await response.text();
-          console.error('Error response text:', errorText);
-          errorDetail = errorText;
-        } catch (e) {
-          console.error('Failed to parse error response:', e);
-        }
-        throw new Error(`Failed to send message: ${response.statusText} - ${errorDetail}`);
-      }
-
-      const savedMessage: ChatMessage = await response.json();
-      console.log('Message sent successfully via HTTP:', savedMessage);
-      
-      return savedMessage;
-
-    } catch (error) {
-      console.error('Error sending message via HTTP:', error);
-      throw error; // Re-throw the error to be caught by the component
+    });
+    
+    // Try to reconnect for abnormal closures
+    if (event.code !== 1000 && event.code !== 1001) {
+      this.scheduleReconnect();
     }
   }
 
-  public async fetchChatHistory(roomId: string, limit: number = 50): Promise<ChatMessage[]> {
+  private handleError(event: Event): void {
+    console.error('WebSocket error:', event);
+    // Connection errors will also trigger onclose, so we'll handle reconnection there
+  }
+
+  private handleMessage(event: MessageEvent): void {
     try {
-      const response = await fetch(`${this.apiBaseUrl}/api/rooms/${roomId}/history?limit=${limit}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch chat history: ${response.statusText}`);
+      const data = JSON.parse(event.data);
+      console.log('Received message:', data);
+      
+      if (data.type === 'message') {
+        // Notify message listeners
+        this.messageCallbacks.forEach(callback => {
+          try {
+            callback(data.data);
+          } catch (e) {
+            console.error('Error in message callback:', e);
+          }
+        });
+      } else if (data.type === 'user_online') {
+        // User came online in the global chat system
+        const joinEvent = {
+          roomId: 'global',  // Using 'global' as an identifier for global presence
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userJoinedRoomCallbacks.forEach(callback => {
+          try {
+            callback(joinEvent);
+          } catch (e) {
+            console.error('Error in user online callback:', e);
+          }
+        });
+      } else if (data.type === 'user_offline') {
+        // User went offline from the global chat system
+        const leaveEvent = {
+          roomId: 'global',  // Using 'global' as an identifier for global presence
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userWentOfflineCallbacks.forEach(callback => {
+          try {
+            callback(leaveEvent);
+          } catch (e) {
+            console.error('Error in user offline callback:', e);
+          }
+        });
+      } else if (data.type === 'user_joined_room') {
+        // Legacy event - map to global user presence for compatibility
+        const userEvent = {
+          roomId: 'global',
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userJoinedRoomCallbacks.forEach(callback => {
+          try {
+            callback(userEvent);
+          } catch (e) {
+            console.error('Error in user joined callback:', e);
+          }
+        });
+      } else if (data.type === 'user_left_room') {
+        // Legacy event - map to global user presence for compatibility
+        const userEvent = {
+          roomId: 'global',
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userWentOfflineCallbacks.forEach(callback => {
+          try {
+            callback(userEvent);
+          } catch (e) {
+            console.error('Error in user left callback:', e);
+          }
+        });
+      } else if (data.type === 'error') {
+        console.error('Received error from server:', data.message);
       }
-      return await response.json();
-    } catch (error) {
-      console.error('Error fetching chat history:', error);
-      return []; // Return empty array on error instead of throwing
+    } catch (e) {
+      console.error('Error handling WebSocket message:', e, 'Raw message:', event.data);
     }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimeoutId !== null) {
+      window.clearTimeout(this.reconnectTimeoutId);
+    }
+    
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.log('Maximum reconnect attempts reached. Giving up.');
+      return;
+    }
+    
+    const delay = this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts);
+    console.log(`Scheduling reconnect attempt ${this.reconnectAttempts + 1} in ${delay}ms`);
+    
+    this.reconnectTimeoutId = window.setTimeout(() => {
+      this.reconnectAttempts++;
+      console.log(`Attempting to reconnect (attempt ${this.reconnectAttempts})...`);
+      
+      this.startConnection(this.currentUserId, this.currentUsername)
+        .then(() => {
+          console.log('Reconnection successful');
+          this.reconnectAttempts = 0;
+        })
+        .catch(err => {
+          console.error('Reconnection failed:', err);
+          this.scheduleReconnect();
+        });
+    }, delay);
   }
 }
 
