@@ -15,7 +15,7 @@ export class ChatService {
   private reconnectTimeoutId: number | null = null; // Explicitly number for window.setTimeout
   private currentUsername: string = '';
   private currentUserId: string = '';
-  private roomList: string[] = []; // Keep track of all rooms
+  // No need to track room subscriptions anymore as all rooms are available by default
 
   constructor() {
     this.apiBaseUrl = getApiBaseUrl();
@@ -46,8 +46,14 @@ export class ChatService {
       const wsUrl = `${this.wsBaseUrl}/ws/${userId}`;
       console.log(`Connecting to WebSocket at: ${wsUrl} (User ID: ${userId}, Username: ${username})`);
 
+      // Create WebSocket with custom headers to authenticate the user
       this.connection = new WebSocket(wsUrl);
-
+      
+      // Store these values for reference during the connection
+      this.currentUserId = userId;
+      this.currentUsername = username;
+      
+      // Set up event handlers
       this.connection.onopen = this.handleOpen.bind(this);
       this.connection.onclose = this.handleClose.bind(this);
       this.connection.onerror = this.handleError.bind(this);
@@ -124,6 +130,18 @@ export class ChatService {
       this.reconnectTimeoutId = null;
     }
     
+    // If we have an open connection, gracefully close it
+    if (this.connection && this.connection.readyState === WebSocket.OPEN) {
+      console.log('Sending explicit logout notification before closing');
+      
+      // Send a clean closure frame after a small delay to ensure the frame gets sent
+      try {
+        this.connection.close(1000, "User logged out");
+      } catch (e) {
+        console.warn('Error during explicit connection close:', e);
+      }
+    }
+    
     await this.cleanupExistingConnection();
     console.log('WebSocket connection stopped');
   }
@@ -151,6 +169,10 @@ export class ChatService {
       try {
         const response = await fetch(`${this.apiBaseUrl}/api/rooms/${roomId}/messages`, {
           method: 'POST',
+          headers: {
+            // Add user ID as header for authentication
+            'X-User-Id': userId
+          },
           body: formData
         });
 
@@ -224,6 +246,17 @@ export class ChatService {
   private handleClose(event: CloseEvent): void {
     console.log(`WebSocket connection closed: ${event.code} - ${event.reason || 'No reason provided'}`);
     
+    // Handle authentication failures - 4001 is our custom code for unauthorized users
+    if (event.code === 4001) {
+      console.error('Authentication failed:', event.reason);
+      // Clear local storage to force re-login
+      localStorage.removeItem('chatUsername');
+      localStorage.removeItem('chatUserId');
+      // Don't try to reconnect for auth failures
+      window.location.reload(); // Force page reload to show login screen
+      return;
+    }
+    
     // Notify all disconnect listeners
     this.disconnectedCallbacks.forEach(callback => {
       try {
@@ -249,11 +282,7 @@ export class ChatService {
       const data = JSON.parse(event.data);
       console.log('Received message:', data);
       
-      if (data.type === 'subscriptions_ack') {
-        // Update room list from server's acknowledgement 
-        this.roomList = data.rooms || [];
-        console.log('Received subscriptions acknowledgement for rooms:', this.roomList);
-      } else if (data.type === 'message') {
+      if (data.type === 'message') {
         // Notify message listeners
         this.messageCallbacks.forEach(callback => {
           try {
@@ -262,8 +291,41 @@ export class ChatService {
             console.error('Error in message callback:', e);
           }
         });
+      } else if (data.type === 'user_online') {
+        // Convert user_online to legacy user_joined_room format for compatible handling
+        // This allows us to reuse existing callbacks
+        const joinEvent = {
+          type: 'user_joined_room',
+          roomId: 'all',  // Special identifier meaning "all channels"
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userJoinedRoomCallbacks.forEach(callback => {
+          try {
+            callback(joinEvent);
+          } catch (e) {
+            console.error('Error in user online callback:', e);
+          }
+        });
+      } else if (data.type === 'user_offline') {
+        // Convert user_offline to legacy user_left_room format for compatible handling
+        const leaveEvent = {
+          type: 'user_left_room',
+          roomId: 'all',  // Special identifier meaning "all channels"
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userLeftRoomCallbacks.forEach(callback => {
+          try {
+            callback(leaveEvent);
+          } catch (e) {
+            console.error('Error in user offline callback:', e);
+          }
+        });
       } else if (data.type === 'user_joined_room') {
-        // Notify user joined listeners
+        // Legacy handler kept for compatibility
         this.userJoinedRoomCallbacks.forEach(callback => {
           try {
             callback(data);
@@ -272,7 +334,7 @@ export class ChatService {
           }
         });
       } else if (data.type === 'user_left_room') {
-        // Notify user left listeners
+        // Legacy handler kept for compatibility
         this.userLeftRoomCallbacks.forEach(callback => {
           try {
             callback(data);

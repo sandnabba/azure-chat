@@ -17,7 +17,7 @@ function App() {
   );
   const [selectedRoom, setSelectedRoom] = useState<string>('general');
   const [showVersionInfo, setShowVersionInfo] = useState(false);
-  const { isConnected } = useChat();
+  const { isConnected, disconnect } = useChat();
   const location = useLocation();
   const [verificationMessage, setVerificationMessage] = useState<{ type: 'success' | 'error', message: string } | null>(null);
 
@@ -125,7 +125,11 @@ function App() {
     setUserId(userId);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    // First, disconnect the WebSocket to notify other users
+    await disconnect();
+    
+    // Then clear local storage and reset state
     localStorage.removeItem('chatUsername');
     localStorage.removeItem('chatUserId');
     setUsername(null);

@@ -108,11 +108,16 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     if (currentRoomIdRef.current === roomId) return;
 
     console.log(`[ChatContext] setCurrentRoomId: Switching to room ${roomId}`);
+    
+    // Update the current room ID immediately for UI responsiveness
     setCurrentRoomIdInternal(roomId);
+    
     if (roomId) {
+      // Mark the new room as read to reset unread message count
       markRoomAsRead(roomId);
       
-      // Load message history if needed
+      // Load message history if we haven't loaded it before and aren't currently loading it
+      // This ensures we show chat history in newly selected rooms
       if (messagesByRoomRef.current[roomId] === undefined && !loadingHistoryRef.current[roomId]) {
         loadHistory(roomId);
       }
@@ -126,10 +131,48 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setError(null);
     isConnectingRef.current = false;
 
+    // Add the current user to the active users list for all rooms
+    if (currentUsernameRef.current && chatServiceRef.current) {
+      const currentUserId = chatServiceRef.current.getUserId();
+      const currentUsername = currentUsernameRef.current;
+      
+      if (currentUserId) {
+        setActiveUsersByRoomRef(prev => {
+          const updatedUsers = { ...prev };
+          
+          // Add the current user to each room's user list
+          Object.keys(updatedUsers).forEach(roomId => {
+            const roomUsers = updatedUsers[roomId] || [];
+            if (!roomUsers.some(u => u.id === currentUserId)) {
+              updatedUsers[roomId] = [...roomUsers, { 
+                id: currentUserId, 
+                username: currentUsername 
+              }];
+            }
+          });
+          
+          // Also add to the general room if it doesn't exist yet
+          if (!updatedUsers['general']) {
+            updatedUsers['general'] = [{ 
+              id: currentUserId, 
+              username: currentUsername 
+            }];
+          } else if (!updatedUsers['general'].some(u => u.id === currentUserId)) {
+            updatedUsers['general'] = [...updatedUsers['general'], { 
+              id: currentUserId, 
+              username: currentUsername 
+            }];
+          }
+          
+          return updatedUsers;
+        });
+      }
+    }
+
     const roomToActivate = currentRoomIdRef.current || DEFAULT_ROOM_ID;
     console.log(`[ChatContext] handleConnected: Activating room: ${roomToActivate}`);
     setCurrentRoomId(roomToActivate);
-  }, [setCurrentRoomId]);
+  }, [setCurrentRoomId, setActiveUsersByRoomRef]);
 
   const handleDisconnected = useCallback((reason?: string) => {
     console.log(`[ChatContext] WebSocket disconnected. Reason: ${reason}`);
@@ -138,9 +181,10 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     isConnectingRef.current = false;
   }, []);
 
-  const handleReceiveMessage = useCallback((incomingMessage: ChatMessage | any) => {
+  const handleReceiveMessage = useCallback((incomingMessage: ChatMessage | Record<string, any>) => {
     console.log("[ChatContext] Raw incoming message:", incomingMessage);
 
+    // Handle different message formats (support both chatId and roomId fields)
     const roomIdentifier = incomingMessage.chatId || incomingMessage.roomId;
 
     if (!roomIdentifier) {
@@ -148,17 +192,34 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
       return;
     }
 
+    // Check if the incoming message has the required fields for a ChatMessage
+    if (!('id' in incomingMessage) || !('senderId' in incomingMessage) ||
+        !('senderName' in incomingMessage) || !('timestamp' in incomingMessage)) {
+      console.error("[ChatContext] Incoming message missing required fields:", incomingMessage);
+      return;
+    }
+
+    // Normalize message structure to ensure consistent format
     const conformedMessage: ChatMessage = {
-      ...incomingMessage,
+      id: incomingMessage.id,
       roomId: roomIdentifier,
+      senderId: incomingMessage.senderId,
+      senderName: incomingMessage.senderName,
+      content: incomingMessage.content,
+      timestamp: incomingMessage.timestamp,
+      type: incomingMessage.type,
+      attachmentUrl: incomingMessage.attachmentUrl,
+      attachmentFilename: incomingMessage.attachmentFilename
     };
 
+    // Clean up redundant chatId if it exists but differs from roomId
     if (incomingMessage.chatId && incomingMessage.chatId !== incomingMessage.roomId) {
       delete (conformedMessage as any).chatId;
     }
 
     console.log("[ChatContext] Processed message for state update:", conformedMessage);
 
+    // Update the messages for this room, avoiding duplicates
     setMessagesByRoomRef(prev => {
       const existingRoomMessages = prev[roomIdentifier] || [];
       if (existingRoomMessages.some(m => m.id === conformedMessage.id)) {
@@ -174,6 +235,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
       };
     });
 
+    // Increment unread message count if the message is for a different room or the document is not focused
     if (roomIdentifier !== currentRoomIdRef.current || !document.hasFocus()) {
       setUnreadMessagesRef(prev => ({
         ...prev,
@@ -185,21 +247,56 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   const handleUserJoinedRoom = useCallback((event: { roomId: string; userId: string; username: string }) => {
     console.log(`[ChatContext] User ${event.username} (${event.userId}) joined room ${event.roomId}`);
     const newUser = { id: event.userId, username: event.username };
+    
     setActiveUsersByRoomRef(prev => {
-      const roomUsers = prev[event.roomId] ? [...prev[event.roomId]] : [];
-      if (!roomUsers.find(u => u.id === event.userId)) {
-        roomUsers.push(newUser);
+      const updatedUsers = { ...prev };
+      
+      if (event.roomId === 'all') {
+        // This is a global user_online notification, add user to all active rooms
+        Object.keys(updatedUsers).forEach(roomId => {
+          const roomUsers = updatedUsers[roomId] || [];
+          if (!roomUsers.find(u => u.id === event.userId)) {
+            updatedUsers[roomId] = [...roomUsers, newUser];
+          }
+        });
+        
+        // Make sure the user is at least added to the general room
+        if (!updatedUsers['general']) {
+          updatedUsers['general'] = [newUser];
+        } else if (!updatedUsers['general'].find(u => u.id === event.userId)) {
+          updatedUsers['general'] = [...updatedUsers['general'], newUser];
+        }
+      } else {
+        // Legacy room-specific join handling
+        const roomUsers = updatedUsers[event.roomId] ? [...updatedUsers[event.roomId]] : [];
+        if (!roomUsers.find(u => u.id === event.userId)) {
+          roomUsers.push(newUser);
+        }
+        updatedUsers[event.roomId] = roomUsers;
       }
-      return { ...prev, [event.roomId]: roomUsers };
+      
+      return updatedUsers;
     });
   }, [setActiveUsersByRoomRef]);
 
   const handleUserLeftRoom = useCallback((event: { roomId: string; userId: string; username: string }) => {
     console.log(`[ChatContext] User ${event.username} (${event.userId}) left room ${event.roomId}`);
-    setActiveUsersByRoomRef(prev => ({
-      ...prev,
-      [event.roomId]: prev[event.roomId]?.filter(user => user.id !== event.userId) || [],
-    }));
+    
+    setActiveUsersByRoomRef(prev => {
+      const updatedUsers = { ...prev };
+      
+      if (event.roomId === 'all') {
+        // This is a global user_offline notification, remove from all rooms
+        Object.keys(updatedUsers).forEach(roomId => {
+          updatedUsers[roomId] = updatedUsers[roomId]?.filter(user => user.id !== event.userId) || [];
+        });
+      } else {
+        // Legacy room-specific leave handling
+        updatedUsers[event.roomId] = prev[event.roomId]?.filter(user => user.id !== event.userId) || [];
+      }
+      
+      return updatedUsers;
+    });
   }, [setActiveUsersByRoomRef]);
 
   const connect = useCallback(async (userId: string, username: string) => {
@@ -218,11 +315,13 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
       return;
     }
 
+    // Prevent multiple simultaneous connection attempts
     if (isConnectingRef.current) {
       console.log('[ChatContext] Connection attempt already in progress.');
       return;
     }
 
+    // If already connected as the same user, just ensure current room is active
     if (cs.isConnected() && cs.getUserId() === userId) {
       console.log('[ChatContext] Already connected as the same user.');
       if (currentRoomIdRef.current) {
@@ -237,6 +336,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setError(null);
     console.log(`[ChatContext] Attempting to connect for user: ${userId}`);
 
+    // Clean up any existing connection before starting a new one
     if (cs.isConnected()) {
       console.log('[ChatContext] Stopping existing connection before starting new one.');
       await cs.stopConnection();
@@ -273,12 +373,30 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     console.log("[ChatContext] disconnect called");
     const cs = chatServiceRef.current;
     if (cs) {
+      const userId = cs.getUserId();
+      const username = cs.getCurrentUsername();
+      console.log(`[ChatContext] disconnecting user: ${username} (${userId})`);
+      
+      // Close the WebSocket connection
       await cs.stopConnection();
+      
+      // Clean up local active users for this session
+      if (userId) {
+        setActiveUsersByRoomRef(prev => {
+          const updatedUsers = { ...prev };
+          // Remove this user from all rooms
+          Object.keys(updatedUsers).forEach(roomId => {
+            updatedUsers[roomId] = updatedUsers[roomId]?.filter(user => user.id !== userId) || [];
+          });
+          return updatedUsers;
+        });
+      }
+      
       setIsConnected(false);
       isConnectedRef.current = false;
       isConnectingRef.current = false;
     }
-  }, []);
+  }, [setActiveUsersByRoomRef]);
 
   const sendMessage = useCallback(async (payload: { content: string; file?: File | null }) => {
     const { content, file } = payload;

@@ -155,8 +155,24 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
     setRefreshTrigger(prev => prev + 1);
   }, []);
 
-  // Get active users for the currently selected room
-  const currentRoomActiveUsers = activeUsersByRoom[currentRoomId || 'general'] || [];
+  // Get all active users across all channels (without duplicates)
+  const allActiveUsers = React.useMemo(() => {
+    // Create a map using user ids as keys to ensure uniqueness
+    const uniqueUsersMap = new Map();
+    
+    // Iterate through all rooms and their active users
+    Object.values(activeUsersByRoom).forEach(roomUsers => {
+      roomUsers.forEach((user) => {
+        // Only add the user if they're not already in our map
+        if (!uniqueUsersMap.has(user.id)) {
+          uniqueUsersMap.set(user.id, user);
+        }
+      });
+    });
+    
+    // Convert the map values back to an array
+    return Array.from(uniqueUsersMap.values());
+  }, [activeUsersByRoom]);
 
   return (
     <div className="sidebar">
@@ -225,13 +241,15 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
       )}
       
       <div className="active-users">
-        <h3>Active Users in #{currentRoomId || 'general'} ({currentRoomActiveUsers.length})</h3>
+        <h3>Active Users ({allActiveUsers.length})</h3>
         <ul>
-          {currentRoomActiveUsers.map((user) => (
-            <li key={user.id}>{user.username}</li>
+          {allActiveUsers.map((user) => (
+            <li key={user.id} title={`User ID: ${user.id}`}>
+              {user.username}
+            </li>
           ))}
-          {currentRoomActiveUsers.length === 0 && (
-            <li className="no-users">No active users in this room</li>
+          {allActiveUsers.length === 0 && (
+            <li className="no-users">No active users online</li>
           )}
         </ul>
       </div>
