@@ -448,8 +448,55 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     print(f"WebSocket connection accepted for user: {user_id}")
     active_connections[user_id] = websocket
+    
+    # Initialize user subscriptions if not existing
     if user_id not in user_subscriptions:
         user_subscriptions[user_id] = []
+    
+    # Auto-subscribe the user to all existing rooms
+    try:
+        rooms = await db.get_chat_rooms()
+        if not rooms:
+            # Ensure there's at least a general room
+            general_room = ChatRoom(
+                id="general",
+                name="General",
+                description="Public chat room for everyone"
+            )
+            await db.create_chat_room(general_room)
+            rooms = [general_room]
+            
+        # Subscribe to all rooms automatically
+        for room in rooms:
+            if room.id not in user_subscriptions[user_id]:
+                user_subscriptions[user_id].append(room.id)
+                print(f"Auto-subscribed user {user_id} to room {room.id}")
+                
+                # Send join notification to other users in this room
+                user_info = active_users[user_id]
+                join_notification = {
+                    "type": "user_joined_room",
+                    "roomId": room.id,
+                    "userId": user_id,
+                    "username": user_info.username
+                }
+                
+                # Send to all other connected users
+                for other_user_id, other_ws in active_connections.items():
+                    if other_user_id != user_id:
+                        try:
+                            await other_ws.send_json(join_notification)
+                        except Exception as e:
+                            print(f"Error notifying {other_user_id} about {user_id} joining {room.id}: {e}")
+                
+        # Send subscription acknowledgement for all rooms at once
+        await websocket.send_json({
+            "type": "subscriptions_ack", 
+            "rooms": [room.id for room in rooms],
+            "status": "subscribed"
+        })
+    except Exception as e:
+        print(f"Error auto-subscribing user {user_id} to rooms: {e}")
 
     try:
         while True:
@@ -458,91 +505,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             message_data = json.loads(data)
             msg_type = message_data.get("type")
 
-            if msg_type == "subscribe":
-                room_id = message_data.get("roomId")
-                if room_id:
-                    newly_subscribed = False
-                    if room_id not in user_subscriptions[user_id]:
-                        user_subscriptions[user_id].append(room_id)
-                        newly_subscribed = True
-                        print(f"User {user_id} subscribed to room {room_id}")
-                    
-                    # Send ACK to the subscribing user immediately
-                    await websocket.send_json({"type": "subscription_ack", "roomId": room_id, "status": "subscribed"})
-                    print(f"Sent subscription_ack to {user_id} for room {room_id}")
-
-                    if newly_subscribed:
-                        # Notify other users in the room (can happen after ack)
-                        user_info = active_users.get(user_id)
-                        if not user_info:
-                            print(f"User {user_id} not found in active_users during subscribe. Creating temporary info for notification.")
-                            user_info = User(
-                                id=user_id,
-                                username=user_id, # Or a more generic name
-                                email=f"{user_id}@temporary.chat", # Placeholder
-                                password="temp_not_usable_password", # Placeholder
-                                email_confirmed=True # Assume confirmed for this context
-                            )
-                        
-                        join_notification = {
-                            "type": "user_joined_room",
-                            "roomId": room_id,
-                            "userId": user_id,
-                            "username": user_info.username
-                        }
-                        for sub_user_id, subscribed_rooms_list in user_subscriptions.items(): # Renamed variable
-                            if room_id in subscribed_rooms_list and sub_user_id != user_id and sub_user_id in active_connections:
-                                try:
-                                    print(f"Notifying {sub_user_id} about {user_id} joining {room_id}")
-                                    await active_connections[sub_user_id].send_json(join_notification)
-                                except Exception as e:
-                                    print(f"Error notifying {sub_user_id} about {user_id} joining {room_id}: {e}")
-                else:
-                    await websocket.send_json({"type": "error", "message": "roomId missing for subscribe"})
-
-            elif msg_type == "unsubscribe":
-                room_id = message_data.get("roomId")
-                if room_id:
-                    if room_id in user_subscriptions[user_id]:
-                        user_subscriptions[user_id].remove(room_id)
-                        print(f"User {user_id} unsubscribed from room {room_id}")
-                        # Notify other users in the room
-                        user_info = active_users.get(user_id)
-                        if not user_info:
-                            print(f"User {user_id} not found in active_users during unsubscribe. Creating temporary info for notification.")
-                            user_info = User(
-                                id=user_id,
-                                username=user_id, # Or a more generic name
-                                email=f"{user_id}@temporary.chat", # Placeholder
-                                password="temp_not_usable_password", # Placeholder
-                                email_confirmed=True # Assume confirmed for this context
-                            )
-                        leave_notification = {
-                            "type": "user_left_room",
-                            "roomId": room_id,
-                            "userId": user_id,
-                            "username": user_info.username
-                        }
-                        for sub_user_id, subscribed_rooms in user_subscriptions.items():
-                            if room_id in subscribed_rooms and sub_user_id in active_connections: # Notify everyone including self if needed, or add sub_user_id != user_id
-                                try:
-                                    await active_connections[sub_user_id].send_json(leave_notification)
-                                except Exception as e:
-                                    print(f"Error notifying {sub_user_id} about {user_id} leaving {room_id}: {e}")
-                    await websocket.send_json({"type": "unsubscription_ack", "roomId": room_id, "status": "unsubscribed"})
-                else:
-                    await websocket.send_json({"type": "error", "message": "roomId missing for unsubscribe"})
-
-            elif msg_type == "message":
+            if msg_type == "message":
                 msg_content_data = message_data.get("data", {})
                 room_id = msg_content_data.get("chatId")
 
                 if not room_id:
                     await websocket.send_json({"type": "error", "message": "chatId missing in message data"})
-                    continue
-
-                if room_id not in user_subscriptions.get(user_id, []):
-                    await websocket.send_json({"type": "error", "message": f"Not subscribed to room {room_id}"})
                     continue
                 
                 # Ensure senderName is correctly fetched
@@ -563,12 +531,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     await db.create_message(message)
                     
                     broadcast_payload = {"type": "message", "data": message.dict()}
-                    for sub_user_id, subscribed_rooms in user_subscriptions.items():
-                        if room_id in subscribed_rooms and sub_user_id in active_connections:
-                            try:
-                                await active_connections[sub_user_id].send_json(broadcast_payload)
-                            except Exception as e:
-                                print(f"Error broadcasting WS message to {sub_user_id} in room {room_id}: {e}")
+                    # Send to all connected users (they will filter by room in frontend)
+                    for conn_user_id, conn in active_connections.items():
+                        try:
+                            await conn.send_json(broadcast_payload)
+                        except Exception as e:
+                            print(f"Error broadcasting WS message to {conn_user_id} in room {room_id}: {e}")
                 else:
                     print(f"Received WS message from {user_id} for room {room_id} without content or with attachment, ignoring.")
                     await websocket.send_json({"type": "error", "message": "WebSocket messages should be text-only; use HTTP POST for attachments."})
@@ -607,21 +575,21 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             )
 
         if user_id in user_subscriptions:
+            # Notify other users about this user leaving all rooms
             for room_id in list(user_subscriptions[user_id]): # Iterate over a copy
                 print(f"User {user_id} is leaving room {room_id} due to disconnect.")
-                # Notify other users in this room
+                # Notify all other connected users
                 leave_notification = {
                     "type": "user_left_room",
                     "roomId": room_id,
                     "userId": user_id,
                     "username": disconnected_user_info.username
                 }
-                for sub_user_id, subscribed_rooms in user_subscriptions.items():
-                    if room_id in subscribed_rooms and sub_user_id in active_connections: # sub_user_id != user_id is implicit as user_id is no longer in active_connections
-                        try:
-                            await active_connections[sub_user_id].send_json(leave_notification) # Added await here
-                        except Exception as e:
-                            print(f"Error notifying {sub_user_id} about {user_id} leaving {room_id} (during disconnect): {e}") # Added more context to log
+                for other_user_id, other_ws in active_connections.items():
+                    try:
+                        await other_ws.send_json(leave_notification)
+                    except Exception as e:
+                        print(f"Error notifying {other_user_id} about {user_id} leaving {room_id} (during disconnect): {e}")
             del user_subscriptions[user_id]
         print(f"Cleaned up resources for disconnected user {user_id}")
 

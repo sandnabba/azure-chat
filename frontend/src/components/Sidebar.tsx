@@ -21,8 +21,7 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
     currentRoomId,
     setCurrentRoomId,
     unreadMessages,
-    activeUsersByRoom,
-    subscribedRooms
+    activeUsersByRoom
   } = useChat();
   const [rooms, setRooms] = useState<ChatRoomData[]>([]);
   const [isAddChannelModalOpen, setIsAddChannelModalOpen] = useState(false);
@@ -188,39 +187,34 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
         <ul className="channel-list">
           {rooms.map((room) => {
             const unreadCount = unreadMessages[room.id] || 0;
-            const isRoomSubscribed = subscribedRooms.has(room.id);
             const hasUnread = unreadCount > 0 && room.id !== currentRoomId;
-            const showSubscribeIndicator = !isRoomSubscribed && room.id !== 'general';
 
             return (
               <li
                 key={room.id}
-                className={`${room.id === currentRoomId ? 'active' : ''} ${!isRoomSubscribed && room.id !== 'general' ? 'unsubscribed' : ''}`}
+                className={`${room.id === currentRoomId ? 'active' : ''}`}
                 onClick={() => handleSelectRoom(room.id)}
-                title={!isRoomSubscribed && room.id !== 'general' ? `${room.name || room.id} (Not Subscribed)` : (room.name || room.id)}
+                title={room.name || room.id}
               >
                 <div className="channel-item">
-                  <span className="channel-name"># {room.name || room.id}</span>
-                  {(hasUnread || showSubscribeIndicator) && (
-                    <div className="indicators-container">
-                      {hasUnread && (
-                        <span className="unread-indicator">{unreadCount > 9 ? '9+' : unreadCount}</span>
-                      )}
-                      {showSubscribeIndicator && (
-                         <span className="subscribe-indicator" title="Not subscribed">!</span>
-                      )}
-                    </div>
-                  )}
+                  <div className="channel-label">
+                    <span className="channel-hash">#</span>{room.name || room.id}
+                  </div>
+                  <div className="channel-actions">
+                    {hasUnread && (
+                      <span className="unread-indicator">{unreadCount > 9 ? '9+' : unreadCount}</span>
+                    )}
+                    {room.id !== 'general' && (
+                      <button
+                        className="delete-channel-button"
+                        onClick={(e) => openDeleteModal(room, e)}
+                        title={`Delete ${room.name} channel`}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 </div>
-                {room.id !== 'general' && (
-                  <button
-                    className="delete-channel-button"
-                    onClick={(e) => openDeleteModal(room, e)}
-                    title={`Delete ${room.name} channel`}
-                  >
-                    ×
-                  </button>
-                )}
               </li>
             );
           })}
@@ -233,8 +227,8 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
       <div className="active-users">
         <h3>Active Users in #{currentRoomId || 'general'} ({currentRoomActiveUsers.length})</h3>
         <ul>
-          {currentRoomActiveUsers.map((username) => (
-            <li key={username}>{username}</li>
+          {currentRoomActiveUsers.map((user) => (
+            <li key={user.id}>{user.username}</li>
           ))}
           {currentRoomActiveUsers.length === 0 && (
             <li className="no-users">No active users in this room</li>

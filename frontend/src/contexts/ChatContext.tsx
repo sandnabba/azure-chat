@@ -8,7 +8,6 @@ export interface ChatContextType {
   currentRoomId: string | null;
   isConnected: boolean;
   isConnecting: boolean;
-  subscribedRooms: Set<string>;
   unreadMessages: Record<string, number>;
   error: string | null;
   connect: (userId: string, username: string) => Promise<void>;
@@ -44,9 +43,6 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   const [unreadMessages, setUnreadMessages] = useState<Record<string, number>>({});
   const unreadMessagesRef = useRef(unreadMessages);
 
-  const [subscribedRooms, setSubscribedRoomsState] = useState<Set<string>>(new Set());
-  const subscribedRoomsRef = useRef(subscribedRooms);
-
   const loadingHistoryRef = useRef<Record<string, boolean>>({});
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef(error);
@@ -60,9 +56,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     currentRoomIdRef.current = currentRoomId;
     isConnectedRef.current = isConnected;
     unreadMessagesRef.current = unreadMessages;
-    subscribedRoomsRef.current = subscribedRooms;
     errorRef.current = error;
-  }, [messagesByRoom, activeUsersByRoom, currentRoomId, isConnected, unreadMessages, subscribedRooms, error]);
+  }, [messagesByRoom, activeUsersByRoom, currentRoomId, isConnected, unreadMessages, error]);
 
   if (!chatServiceRef.current) {
     chatServiceRef.current = new ChatService();
@@ -84,12 +79,6 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     const newUnread = updater(unreadMessagesRef.current);
     unreadMessagesRef.current = newUnread;
     setUnreadMessages(newUnread);
-  }, []);
-
-  const setSubscribedRoomsRef = useCallback((updater: (prev: Set<string>) => Set<string>) => {
-    const newSubscribedRooms = updater(subscribedRoomsRef.current);
-    subscribedRoomsRef.current = newSubscribedRooms;
-    setSubscribedRoomsState(newSubscribedRooms);
   }, []);
 
   const markRoomAsRead = useCallback((roomId: string) => {
@@ -116,51 +105,17 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   }, [setMessagesByRoomRef]);
 
   const setCurrentRoomId = useCallback((roomId: string | null) => {
-    const cs = chatServiceRef.current;
-    if (!cs) {
-      console.warn("[ChatContext] setCurrentRoomId called before ChatService is initialized.");
-      if (roomId !== null) setCurrentRoomIdInternal(roomId);
-      return;
-    }
-
-    if (roomId === null) {
-      setCurrentRoomIdInternal(null);
-      currentRoomIdRef.current = null;
-      return;
-    }
-
-    if (currentRoomIdRef.current === roomId && cs.isSubscribedTo(roomId)) {
-      console.log(`[ChatContext] setCurrentRoomId: Already in room ${roomId} and subscribed.`);
-      markRoomAsRead(roomId);
-      if (messagesByRoomRef.current[roomId] === undefined && !loadingHistoryRef.current[roomId]) {
-        loadHistory(roomId);
-      }
-      return;
-    }
+    if (currentRoomIdRef.current === roomId) return;
 
     console.log(`[ChatContext] setCurrentRoomId: Switching to room ${roomId}`);
     setCurrentRoomIdInternal(roomId);
-    markRoomAsRead(roomId);
-
-    if (isConnectedRef.current) {
-      if (!cs.isSubscribedTo(roomId)) {
-        console.log(`[ChatContext] setCurrentRoomId: Not subscribed to ${roomId} via ChatService. Subscribing...`);
-        cs.subscribeToRoom(roomId)
-          .then(() => {
-            console.log(`[ChatContext] setCurrentRoomId: Successfully subscribed to ${roomId}.`);
-          })
-          .catch((err: Error) => {
-            console.error(`[ChatContext] setCurrentRoomId: Failed to subscribe to ${roomId}:`, err);
-            setError(`Failed to subscribe to room ${roomId}. ${err.message}`);
-          });
-      } else {
-        console.log(`[ChatContext] setCurrentRoomId: Already subscribed to ${roomId} via ChatService. Loading history if needed.`);
-        if (messagesByRoomRef.current[roomId] === undefined && !loadingHistoryRef.current[roomId]) {
-          loadHistory(roomId);
-        }
+    if (roomId) {
+      markRoomAsRead(roomId);
+      
+      // Load message history if needed
+      if (messagesByRoomRef.current[roomId] === undefined && !loadingHistoryRef.current[roomId]) {
+        loadHistory(roomId);
       }
-    } else {
-      console.warn(`[ChatContext] setCurrentRoomId: Called for ${roomId} but not connected. Subscription will be attempted on connection.`);
     }
   }, [markRoomAsRead, loadHistory]);
 
@@ -181,31 +136,6 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     isConnectedRef.current = false;
     setIsConnected(false);
     isConnectingRef.current = false;
-  }, []);
-
-  const handleSubscribed = useCallback((roomId: string) => {
-    console.log(`[ChatContext] Successfully subscribed to room: ${roomId}`);
-    setSubscribedRoomsRef(prev => new Set(prev).add(roomId));
-    if (messagesByRoomRef.current[roomId] === undefined && !loadingHistoryRef.current[roomId]) {
-      loadHistory(roomId);
-    }
-    if (currentRoomIdRef.current === roomId) {
-      markRoomAsRead(roomId);
-    }
-  }, [loadHistory, markRoomAsRead, setSubscribedRoomsRef]);
-
-  const handleUnsubscribed = useCallback((roomId: string) => {
-    console.log(`[ChatContext] Unsubscribed from room: ${roomId}`);
-    setSubscribedRoomsRef(prev => {
-      const newSet = new Set(prev);
-      newSet.delete(roomId);
-      return newSet;
-    });
-  }, [setSubscribedRoomsRef]);
-
-  const handleSubscriptionError = useCallback((roomId: string, err: Error) => {
-    console.error(`[ChatContext] Subscription error for room ${roomId}:`, err);
-    setError(`Failed to subscribe to room ${roomId}: ${err.message}`);
   }, []);
 
   const handleReceiveMessage = useCallback((incomingMessage: ChatMessage | any) => {
@@ -296,7 +226,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     if (cs.isConnected() && cs.getUserId() === userId) {
       console.log('[ChatContext] Already connected as the same user.');
       if (currentRoomIdRef.current) {
-        setCurrentRoomId(currentRoomIdRef.current); // Ensure setCurrentRoomId is available in scope
+        setCurrentRoomId(currentRoomIdRef.current);
       } else {
         setCurrentRoomId(DEFAULT_ROOM_ID);
       }
@@ -315,9 +245,6 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }
 
     cs.onDisconnected(handleDisconnected);
-    cs.onSubscribed(handleSubscribed);
-    cs.onUnsubscribed(handleUnsubscribed);
-    cs.onSubscriptionError(handleSubscriptionError);
     cs.onReceiveMessage(handleReceiveMessage);
     cs.onUserJoinedRoom(handleUserJoinedRoom);
     cs.onUserLeftRoom(handleUserLeftRoom);
@@ -336,13 +263,10 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   }, [
     handleConnected, 
     handleDisconnected, 
-    handleSubscribed, 
-    handleUnsubscribed, 
-    handleSubscriptionError, 
     handleReceiveMessage, 
     handleUserJoinedRoom, 
     handleUserLeftRoom, 
-    setCurrentRoomId // Added missing dependency
+    setCurrentRoomId
   ]);
 
   const disconnect = useCallback(async () => {
@@ -350,19 +274,11 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     const cs = chatServiceRef.current;
     if (cs) {
       await cs.stopConnection();
-      // Reset relevant states after disconnection
       setIsConnected(false);
       isConnectedRef.current = false;
       isConnectingRef.current = false;
-      // currentRoomIdRef.current = null; // Optionally reset current room
-      // setCurrentRoomIdInternal(null);
-      // setSubscribedRoomsState(new Set()); // Clear subscribed rooms
-      // messagesByRoomRef.current = {}; // Clear messages
-      // setMessagesByRoom({});
-      // activeUsersByRoomRef.current = {}; // Clear active users
-      // setActiveUsersByRoom({});
     }
-  }, []); // No dependencies needed if only interacting with chatServiceRef and setting state
+  }, []);
 
   const sendMessage = useCallback(async (payload: { content: string; file?: File | null }) => {
     const { content, file } = payload;
@@ -402,9 +318,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
       console.log(`[ChatContext] useEffect[currentRoomId, isConnected]: Room ${currentRoomId} is active and connected. Marking as read.`);
       markRoomAsRead(currentRoomId);
 
-      if (cs.isSubscribedTo(currentRoomId) &&
-          messagesByRoomRef.current[currentRoomId] === undefined &&
-          !loadingHistoryRef.current[currentRoomId]) {
+      if (messagesByRoomRef.current[currentRoomId] === undefined && !loadingHistoryRef.current[currentRoomId]) {
         console.log(`[ChatContext] useEffect[currentRoomId, isConnected]: Safeguard: Loading history for ${currentRoomId}`);
         loadHistory(currentRoomId);
       }
@@ -417,7 +331,6 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     currentRoomId,
     isConnected,
     isConnecting: isConnectingRef.current,
-    subscribedRooms,
     unreadMessages,
     error,
     connect,
