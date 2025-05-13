@@ -4,7 +4,7 @@ import { User, ChatMessage } from '../types/chat';
 
 export interface ChatContextType {
   messagesByRoom: Record<string, ChatMessage[]>;
-  activeUsersByRoom: Record<string, User[]>;
+  activeUsers: User[]; // Changed from activeUsersByRoom to a simple array of active users
   currentRoomId: string | null;
   isConnected: boolean;
   isConnecting: boolean;
@@ -31,8 +31,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
   const [messagesByRoom, setMessagesByRoom] = useState<Record<string, ChatMessage[]>>({});
   const messagesByRoomRef = useRef(messagesByRoom);
 
-  const [activeUsersByRoom, setActiveUsersByRoom] = useState<Record<string, User[]>>({});
-  const activeUsersByRoomRef = useRef(activeUsersByRoom);
+  const [activeUsers, setActiveUsers] = useState<User[]>([]);
+  const activeUsersRef = useRef(activeUsers);
 
   const [currentRoomId, setCurrentRoomIdInternal] = useState<string | null>(null);
   const currentRoomIdRef = useRef(currentRoomId);
@@ -52,12 +52,12 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
 
   useEffect(() => {
     messagesByRoomRef.current = messagesByRoom;
-    activeUsersByRoomRef.current = activeUsersByRoom;
+    activeUsersRef.current = activeUsers;
     currentRoomIdRef.current = currentRoomId;
     isConnectedRef.current = isConnected;
     unreadMessagesRef.current = unreadMessages;
     errorRef.current = error;
-  }, [messagesByRoom, activeUsersByRoom, currentRoomId, isConnected, unreadMessages, error]);
+  }, [messagesByRoom, activeUsers, currentRoomId, isConnected, unreadMessages, error]);
 
   if (!chatServiceRef.current) {
     chatServiceRef.current = new ChatService();
@@ -69,10 +69,11 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setMessagesByRoom(newMessages);
   }, []);
 
-  const setActiveUsersByRoomRef = useCallback((updater: (prev: Record<string, User[]>) => Record<string, User[]>) => {
-    const newUsers = updater(activeUsersByRoomRef.current);
-    activeUsersByRoomRef.current = newUsers;
-    setActiveUsersByRoom(newUsers);
+  // This helper function ensures refs stay in sync with state
+  const updateActiveUsers = useCallback((updater: (prev: User[]) => User[]) => {
+    const newUsers = updater(activeUsersRef.current);
+    activeUsersRef.current = newUsers;
+    setActiveUsers(newUsers);
   }, []);
 
   const setUnreadMessagesRef = useCallback((updater: (prev: Record<string, number>) => Record<string, number>) => {
@@ -131,40 +132,18 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     setError(null);
     isConnectingRef.current = false;
 
-    // Add the current user to the active users list for all rooms
+    // Add the current user to the active users list
     if (currentUsernameRef.current && chatServiceRef.current) {
       const currentUserId = chatServiceRef.current.getUserId();
       const currentUsername = currentUsernameRef.current;
       
       if (currentUserId) {
-        setActiveUsersByRoomRef(prev => {
-          const updatedUsers = { ...prev };
-          
-          // Add the current user to each room's user list
-          Object.keys(updatedUsers).forEach(roomId => {
-            const roomUsers = updatedUsers[roomId] || [];
-            if (!roomUsers.some(u => u.id === currentUserId)) {
-              updatedUsers[roomId] = [...roomUsers, { 
-                id: currentUserId, 
-                username: currentUsername 
-              }];
-            }
-          });
-          
-          // Also add to the general room if it doesn't exist yet
-          if (!updatedUsers['general']) {
-            updatedUsers['general'] = [{ 
-              id: currentUserId, 
-              username: currentUsername 
-            }];
-          } else if (!updatedUsers['general'].some(u => u.id === currentUserId)) {
-            updatedUsers['general'] = [...updatedUsers['general'], { 
-              id: currentUserId, 
-              username: currentUsername 
-            }];
+        // Add this user to global active users list if not already there
+        updateActiveUsers(prev => {
+          if (prev.some(user => user.id === currentUserId)) {
+            return prev; // User already in the list
           }
-          
-          return updatedUsers;
+          return [...prev, { id: currentUserId, username: currentUsername }];
         });
       }
     }
@@ -172,7 +151,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     const roomToActivate = currentRoomIdRef.current || DEFAULT_ROOM_ID;
     console.log(`[ChatContext] handleConnected: Activating room: ${roomToActivate}`);
     setCurrentRoomId(roomToActivate);
-  }, [setCurrentRoomId, setActiveUsersByRoomRef]);
+  }, [setCurrentRoomId, updateActiveUsers]);
 
   const handleDisconnected = useCallback((reason?: string) => {
     console.log(`[ChatContext] WebSocket disconnected. Reason: ${reason}`);
@@ -185,7 +164,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     console.log("[ChatContext] Raw incoming message:", incomingMessage);
 
     // Handle different message formats (support both chatId and roomId fields)
-    const roomIdentifier = incomingMessage.chatId || incomingMessage.roomId;
+    const roomIdentifier = (incomingMessage as any).chatId || incomingMessage.roomId;
 
     if (!roomIdentifier) {
       console.error("[ChatContext] Received message lacks a room identifier (chatId/roomId):", incomingMessage);
@@ -213,7 +192,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     };
 
     // Clean up redundant chatId if it exists but differs from roomId
-    if (incomingMessage.chatId && incomingMessage.chatId !== incomingMessage.roomId) {
+    if ((incomingMessage as any).chatId && (incomingMessage as any).chatId !== incomingMessage.roomId) {
       delete (conformedMessage as any).chatId;
     }
 
@@ -244,60 +223,25 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     }
   }, [setMessagesByRoomRef, setUnreadMessagesRef]);
 
-  const handleUserJoinedRoom = useCallback((event: { roomId: string; userId: string; username: string }) => {
-    console.log(`[ChatContext] User ${event.username} (${event.userId}) joined room ${event.roomId}`);
+  const handleUserCameOnline = useCallback((event: { roomId: string; userId: string; username: string }) => {
+    console.log(`[ChatContext] User ${event.username} (${event.userId}) came online`);
     const newUser = { id: event.userId, username: event.username };
     
-    setActiveUsersByRoomRef(prev => {
-      const updatedUsers = { ...prev };
-      
-      if (event.roomId === 'all') {
-        // This is a global user_online notification, add user to all active rooms
-        Object.keys(updatedUsers).forEach(roomId => {
-          const roomUsers = updatedUsers[roomId] || [];
-          if (!roomUsers.find(u => u.id === event.userId)) {
-            updatedUsers[roomId] = [...roomUsers, newUser];
-          }
-        });
-        
-        // Make sure the user is at least added to the general room
-        if (!updatedUsers['general']) {
-          updatedUsers['general'] = [newUser];
-        } else if (!updatedUsers['general'].find(u => u.id === event.userId)) {
-          updatedUsers['general'] = [...updatedUsers['general'], newUser];
-        }
-      } else {
-        // Legacy room-specific join handling
-        const roomUsers = updatedUsers[event.roomId] ? [...updatedUsers[event.roomId]] : [];
-        if (!roomUsers.find(u => u.id === event.userId)) {
-          roomUsers.push(newUser);
-        }
-        updatedUsers[event.roomId] = roomUsers;
+    // With global user presence model, simply add the user to our active users list
+    updateActiveUsers(prev => {
+      if (prev.some(user => user.id === event.userId)) {
+        return prev; // User already in the list
       }
-      
-      return updatedUsers;
+      return [...prev, newUser];
     });
-  }, [setActiveUsersByRoomRef]);
+  }, [updateActiveUsers]);
 
-  const handleUserLeftRoom = useCallback((event: { roomId: string; userId: string; username: string }) => {
-    console.log(`[ChatContext] User ${event.username} (${event.userId}) left room ${event.roomId}`);
+  const handleUserWentOffline = useCallback((event: { roomId: string; userId: string; username: string }) => {
+    console.log(`[ChatContext] User ${event.username} (${event.userId}) went offline`);
     
-    setActiveUsersByRoomRef(prev => {
-      const updatedUsers = { ...prev };
-      
-      if (event.roomId === 'all') {
-        // This is a global user_offline notification, remove from all rooms
-        Object.keys(updatedUsers).forEach(roomId => {
-          updatedUsers[roomId] = updatedUsers[roomId]?.filter(user => user.id !== event.userId) || [];
-        });
-      } else {
-        // Legacy room-specific leave handling
-        updatedUsers[event.roomId] = prev[event.roomId]?.filter(user => user.id !== event.userId) || [];
-      }
-      
-      return updatedUsers;
-    });
-  }, [setActiveUsersByRoomRef]);
+    // With global user presence model, simply remove the user from our active users list
+    updateActiveUsers(prev => prev.filter(user => user.id !== event.userId));
+  }, [updateActiveUsers]);
 
   const connect = useCallback(async (userId: string, username: string) => {
     currentUsernameRef.current = username;
@@ -346,8 +290,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
 
     cs.onDisconnected(handleDisconnected);
     cs.onReceiveMessage(handleReceiveMessage);
-    cs.onUserJoinedRoom(handleUserJoinedRoom);
-    cs.onUserLeftRoom(handleUserLeftRoom);
+    cs.onUserCameOnline(handleUserCameOnline);
+    cs.onUserWentOffline(handleUserWentOffline);
 
     try {
       await cs.startConnection(userId, username);
@@ -364,8 +308,8 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
     handleConnected, 
     handleDisconnected, 
     handleReceiveMessage, 
-    handleUserJoinedRoom, 
-    handleUserLeftRoom, 
+    handleUserCameOnline, 
+    handleUserWentOffline, 
     setCurrentRoomId
   ]);
 
@@ -382,21 +326,15 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
       
       // Clean up local active users for this session
       if (userId) {
-        setActiveUsersByRoomRef(prev => {
-          const updatedUsers = { ...prev };
-          // Remove this user from all rooms
-          Object.keys(updatedUsers).forEach(roomId => {
-            updatedUsers[roomId] = updatedUsers[roomId]?.filter(user => user.id !== userId) || [];
-          });
-          return updatedUsers;
-        });
+        // With global user presence model, simply remove this user from the active users list
+        updateActiveUsers(prev => prev.filter(user => user.id !== userId));
       }
       
       setIsConnected(false);
       isConnectedRef.current = false;
       isConnectingRef.current = false;
     }
-  }, [setActiveUsersByRoomRef]);
+  }, [updateActiveUsers]);
 
   const sendMessage = useCallback(async (payload: { content: string; file?: File | null }) => {
     const { content, file } = payload;
@@ -445,7 +383,7 @@ export const ChatProvider: React.FC<ChatProviderProps> = ({ children }) => {
 
   const contextValue: ChatContextType = {
     messagesByRoom,
-    activeUsersByRoom,
+    activeUsers,
     currentRoomId,
     isConnected,
     isConnecting: isConnectingRef.current,

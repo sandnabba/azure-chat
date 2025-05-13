@@ -652,12 +652,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             del user_subscriptions[user_id]
         print(f"Cleaned up resources for disconnected user {user_id}")
         
-        # Debug: Print active users after user disconnection
-        print(f"=== ACTIVE USERS DEBUG (after {user_id} disconnected) ===")
-        print(f"Total active users: {len(active_users)}")
-        for u_id, user in active_users.items():
-            print(f"  - {user.username} (ID: {u_id})")
-        print("=== END ACTIVE USERS DEBUG ===")
 
 @app.on_event("startup")
 async def startup_event():

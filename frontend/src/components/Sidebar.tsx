@@ -21,7 +21,7 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
     currentRoomId,
     setCurrentRoomId,
     unreadMessages,
-    activeUsersByRoom
+    activeUsers
   } = useChat();
   const [rooms, setRooms] = useState<ChatRoomData[]>([]);
   const [isAddChannelModalOpen, setIsAddChannelModalOpen] = useState(false);
@@ -155,24 +155,11 @@ const Sidebar: React.FC<SidebarProps> = ({ selectedRoom, onSelectRoom }) => {
     setRefreshTrigger(prev => prev + 1);
   }, []);
 
-  // Get all active users across all channels (without duplicates)
+  // Get all active users (global user presence model)
   const allActiveUsers = React.useMemo(() => {
-    // Create a map using user ids as keys to ensure uniqueness
-    const uniqueUsersMap = new Map();
-    
-    // Iterate through all rooms and their active users
-    Object.values(activeUsersByRoom).forEach(roomUsers => {
-      roomUsers.forEach((user) => {
-        // Only add the user if they're not already in our map
-        if (!uniqueUsersMap.has(user.id)) {
-          uniqueUsersMap.set(user.id, user);
-        }
-      });
-    });
-    
-    // Convert the map values back to an array
-    return Array.from(uniqueUsersMap.values());
-  }, [activeUsersByRoom]);
+    // Simply return the activeUsers array directly since we now use a global presence model
+    return activeUsers;
+  }, [activeUsers]);
 
   return (
     <div className="sidebar">

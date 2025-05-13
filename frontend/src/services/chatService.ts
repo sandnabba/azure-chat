@@ -7,7 +7,7 @@ export class ChatService {
   private readonly wsBaseUrl: string;
   private messageCallbacks: ((message: ChatMessage) => void)[] = [];
   private userJoinedRoomCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
-  private userLeftRoomCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
+  private userWentOfflineCallbacks: ((event: { roomId: string; userId: string; username: string }) => void)[] = [];
   private disconnectedCallbacks: (() => void)[] = [];
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
@@ -15,7 +15,6 @@ export class ChatService {
   private reconnectTimeoutId: number | null = null; // Explicitly number for window.setTimeout
   private currentUsername: string = '';
   private currentUserId: string = '';
-  // No need to track room subscriptions anymore as all rooms are available by default
 
   constructor() {
     this.apiBaseUrl = getApiBaseUrl();
@@ -225,12 +224,27 @@ export class ChatService {
     this.messageCallbacks.push(callback);
   }
 
-  public onUserJoinedRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+  /**
+   * Register a callback function to be called when a user comes online
+   * With the global presence model, this is called for any user that connects to the chat
+   */
+  public onUserCameOnline(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    // Register callback for global user presence
     this.userJoinedRoomCallbacks.push(callback);
   }
 
-  public onUserLeftRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
-    this.userLeftRoomCallbacks.push(callback);
+  // Keeping the old method name for backward compatibility
+  public onUserJoinedRoom(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    return this.onUserCameOnline(callback);
+  }
+
+  /**
+   * Register a callback function to be called when a user leaves the chat
+   * With the global presence model, this is called for any user that goes offline
+   */
+  public onUserWentOffline(callback: (event: { roomId: string; userId: string; username: string }) => void): void {
+    // Register callback for user presence (global)
+    this.userWentOfflineCallbacks.push(callback);
   }
 
   public onDisconnected(callback: () => void): void {
@@ -292,11 +306,9 @@ export class ChatService {
           }
         });
       } else if (data.type === 'user_online') {
-        // Convert user_online to legacy user_joined_room format for compatible handling
-        // This allows us to reuse existing callbacks
+        // User came online in the global chat system
         const joinEvent = {
-          type: 'user_joined_room',
-          roomId: 'all',  // Special identifier meaning "all channels"
+          roomId: 'global',  // Using 'global' as an identifier for global presence
           userId: data.userId,
           username: data.username
         };
@@ -309,15 +321,14 @@ export class ChatService {
           }
         });
       } else if (data.type === 'user_offline') {
-        // Convert user_offline to legacy user_left_room format for compatible handling
+        // User went offline from the global chat system
         const leaveEvent = {
-          type: 'user_left_room',
-          roomId: 'all',  // Special identifier meaning "all channels"
+          roomId: 'global',  // Using 'global' as an identifier for global presence
           userId: data.userId,
           username: data.username
         };
         
-        this.userLeftRoomCallbacks.forEach(callback => {
+        this.userWentOfflineCallbacks.forEach(callback => {
           try {
             callback(leaveEvent);
           } catch (e) {
@@ -325,19 +336,31 @@ export class ChatService {
           }
         });
       } else if (data.type === 'user_joined_room') {
-        // Legacy handler kept for compatibility
+        // Legacy event - map to global user presence for compatibility
+        const userEvent = {
+          roomId: 'global',
+          userId: data.userId,
+          username: data.username
+        };
+        
         this.userJoinedRoomCallbacks.forEach(callback => {
           try {
-            callback(data);
+            callback(userEvent);
           } catch (e) {
             console.error('Error in user joined callback:', e);
           }
         });
       } else if (data.type === 'user_left_room') {
-        // Legacy handler kept for compatibility
-        this.userLeftRoomCallbacks.forEach(callback => {
+        // Legacy event - map to global user presence for compatibility
+        const userEvent = {
+          roomId: 'global',
+          userId: data.userId,
+          username: data.username
+        };
+        
+        this.userWentOfflineCallbacks.forEach(callback => {
           try {
-            callback(data);
+            callback(userEvent);
           } catch (e) {
             console.error('Error in user left callback:', e);
           }
