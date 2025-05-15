@@ -76,7 +76,6 @@ class CosmosDBConnection:
             try:
                 database = client.get_database_client(self.database_name)
                 await database.read()
-                logging.info(f"Using existing database: {self.database_name}")
             except exceptions.CosmosResourceNotFoundError:
                 try:
                     database = await client.create_database(self.database_name)
@@ -89,7 +88,6 @@ class CosmosDBConnection:
             container = database.get_container_client(container_name)
             try:
                 await container.read()
-                logging.info(f"Using existing container: {container_name}")
                 return container
             except exceptions.CosmosResourceNotFoundError:
                 try:

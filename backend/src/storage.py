@@ -2,8 +2,12 @@ import os
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 from dotenv import load_dotenv
 import uuid
+import logging
 
 load_dotenv()
+
+# Get logger for this module
+logger = logging.getLogger("azure-chat.storage")
 
 class AzureStorageService:
     def __init__(self):
@@ -11,14 +15,14 @@ class AzureStorageService:
         self.container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME", "public-files") # Using the container created by Terraform
         
         if not self.connection_string:
-            print("Warning: AZURE_STORAGE_CONNECTION_STRING not set. File uploads will not work.")
+            logger.warning("AZURE_STORAGE_CONNECTION_STRING not set. File uploads will not work.")
             self.blob_service_client = None
         else:
             try:
                 self.blob_service_client = BlobServiceClient.from_connection_string(self.connection_string)
-                print(f"Azure Storage Service initialized for container: {self.container_name}")
+                logger.info(f"Azure Storage Service initialized for container: {self.container_name}")
             except Exception as e:
-                print(f"Error initializing Azure Blob Service Client: {e}")
+                logger.error(f"Error initializing Azure Blob Service Client: {e}")
                 self.blob_service_client = None
 
     async def _get_container_client(self) -> ContainerClient | None:
@@ -29,17 +33,17 @@ class AzureStorageService:
             # Container is already created by Terraform, just return the client
             return container_client
         except Exception as e:
-            print(f"Error getting container client for '{self.container_name}': {e}")
+            logger.error(f"Error getting container client for '{self.container_name}': {e}")
             return None
 
     async def upload_file(self, file_content: bytes, file_name: str) -> str | None:
         if not self.blob_service_client:
-            print("Cannot upload file: Azure Storage Service not initialized.")
+            logger.warning("Cannot upload file: Azure Storage Service not initialized.")
             return None
 
         container_client = await self._get_container_client()
         if not container_client:
-            print(f"Cannot upload file: Failed to get container client for '{self.container_name}'.")
+            logger.error(f"Cannot upload file: Failed to get container client for '{self.container_name}'.")
             return None
 
         # Generate a unique blob name to avoid overwrites
@@ -48,10 +52,10 @@ class AzureStorageService:
         try:
             blob_client = container_client.get_blob_client(blob_name)
             await blob_client.upload_blob(file_content, overwrite=True)
-            print(f"Successfully uploaded '{file_name}' as blob '{blob_name}'")
+            logger.info(f"Successfully uploaded '{file_name}' as blob '{blob_name}'")
             return blob_client.url
         except Exception as e:
-            print(f"Error uploading file '{file_name}' to blob '{blob_name}': {e}")
+            logger.error(f"Error uploading file '{file_name}' to blob '{blob_name}': {e}")
             return None
         finally:
             # It's important to close the container client if you opened it specifically here

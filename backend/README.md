@@ -50,39 +50,32 @@ This application is designed to be deployed as a custom container on Azure App S
    python src/app.py
    ```
 
-## API Documentation
-
-Once running, API documentation is available at:
-- Swagger UI: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `COSMOS_ENDPOINT` | Azure Cosmos DB endpoint URL | `` |
-| `COSMOS_KEY` | Azure Cosmos DB access key | `` |
-| `COSMOS_DATABASE` | Azure Cosmos DB database name | `chat_db` |
-| `COSMOS_CONTAINER` | Azure Cosmos DB container name | `messages` |
-| `STORAGE_CONNECTION_STRING` | Azure Storage connection string | `` |
-| `STORAGE_CONTAINER_NAME` | Azure Blob Storage container name | `attachments` |
-| `SIGNALR_CONNECTION_STRING` | Azure SignalR connection string | `` |
-| `SIGNALR_SERVICE_MODE` | SignalR service mode | `Default` |
-| `EVENTGRID_TOPIC_ENDPOINT` | Azure Event Grid topic endpoint | `` |
-| `EVENTGRID_TOPIC_KEY` | Azure Event Grid topic access key | `` |
-| `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:5173` |
-| `LOG_LEVEL` | Application logging level | `INFO` |
-| `AUTH_SECRET_KEY` | Secret key for JWT token generation | `your-secret-key` |
-| `AUTH_TOKEN_EXPIRE_MINUTES` | JWT token expiration time in minutes | `60` |
-| `API_PREFIX` | API route prefix | `/api/v1` |
-| `APP_PORT` | Port to run the FastAPI application | `8000` |
-| `APP_HOST` | Host to bind the FastAPI application | `0.0.0.0` |
-| `ENABLE_METRICS` | Enable Prometheus metrics endpoint | `false` |
+The application uses the following environment variables:
 
-## Database
+- `LOG_LEVEL` - Logging level (default: "INFO")
+- `COSMOS_ENDPOINT` - Azure Cosmos DB endpoint
+- `COSMOS_KEY` - Azure Cosmos DB key
+- `AZURE_STORAGE_CONNECTION_STRING` - Azure Blob Storage connection string
+- `AZURE_STORAGE_CONTAINER_NAME` - Azure Blob Storage container name
+- `FRONTEND_URL` - URL of the frontend application (for redirects)
 
-The application uses Azure Cosmos DB (NoSQL) for data persistence. Connection configuration is in `src/database.py`.
+## File structure
 
-## File Storage
+The project is organized as follows:
 
-File attachments are stored using Azure Blob Storage. Configuration is in `src/storage.py`.
+- `src/main.py` - Main entry point for the application
+- `src/logging_config.py` - Logging configuration with colored output
+- `src/state.py` - Shared application state and service instances
+- `src/routes/` - Directory containing all API route modules:
+  - `src/routes/auth.py` - Authentication routes (login, register, verification)
+  - `src/routes/rooms.py` - Chat room management
+  - `src/routes/messages.py` - Message handling
+  - `src/routes/websocket.py` - WebSocket endpoint for real-time chat
+  - `src/routes/debug.py` - Debug endpoints
+  - `src/routes/users.py` - User management endpoints
+- `src/models.py` - Data models used throughout the application
+- `src/database.py` - Database connection and operations
+- `src/storage.py` - Azure Blob Storage service for file uploads
+- `src/auth_utils.py` - Utilities for password hashing and verification
