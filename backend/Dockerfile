@@ -24,5 +24,5 @@ RUN echo "Image version: 1.0.0" >> /app/build_info.txt
 # Expose the port
 EXPOSE 8000
 
-# Start the app with Gunicorn + Uvicorn workers for FastAPI compatibility
-CMD ["gunicorn", "src.app:app", "--bind", "0.0.0.0:8000", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--chdir", "/app"]
+# Start the app with Gunicorn + Uvicorn workers using our custom config
+CMD ["gunicorn", "src.main:app", "--config", "src/gunicorn_conf.py"]

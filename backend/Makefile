@@ -38,11 +38,12 @@ dev:
 	docker run --rm -it \
 	  -e PORT=$(PORT) \
 	  -e PYTHONPATH=/app \
+	  -e LOG_LEVEL=DEBUG \
 	  --env-file Docker.env \
 	  -p $(PORT):$(PORT) \
 	  -v $(PWD)/src:/app/src \
 	  --name $(DEV_CONTAINER_NAME) \
-	  $(IMAGE_NAME) uvicorn src.app:app --reload --host 0.0.0.0 --port $(PORT)
+	  $(IMAGE_NAME) uvicorn src.main:app --reload --host 0.0.0.0 --port $(PORT)
 
 shell:
 	docker exec -it $(CONTAINER_NAME) /bin/sh
