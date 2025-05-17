@@ -31,7 +31,9 @@ def create_app() -> FastAPI:
     # Ensure logging is configured
     app_logger.info("Initializing FastAPI application")
     
-    app = FastAPI(title="Azure Chat Service API")
+    # No special shutdown handler imports needed
+    
+    app = FastAPI(title="Azure Chat Service API", debug=False)
 
     # Add CORS middleware with more permissive settings for WebSockets
     app.add_middleware(
@@ -89,8 +91,31 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown_event():
+        import asyncio
+        from src.state import active_connections
+        
         logger.info("Shutting down application...")
-        await db.close()
+        
+        # First close all WebSocket connections directly
+        logger.info(f"Closing {len(active_connections)} active WebSocket connections...")
+        for user_id, connection in list(active_connections.items()):
+            try:
+                await connection.close(code=1001, reason="Server shutting down")
+                logger.debug(f"Closed WebSocket connection for user {user_id}")
+            except Exception as e:
+                logger.warning(f"Error closing WebSocket connection for user {user_id}: {e}")
+        
+        # Clear connections dictionary
+        active_connections.clear()
+            
+        # Now close the database connection
+        logger.info("Closing database connection...")
+        try:
+            await db.close()
+        except Exception as e:
+            logger.error(f"Error during database closure: {e}")
+            
+        logger.info("Shutdown complete.")
 
     return app
 
@@ -99,11 +124,17 @@ app = create_app()
 
 if __name__ == "__main__":
     """Run the application when executed directly."""
+    import os
+    
     app_logger.info("Running application directly with uvicorn")
+    # Simple development server configuration
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=int(os.environ.get("PORT", "8000")),
         reload=True,
+        timeout_keep_alive=5,     
+        timeout_graceful_shutdown=3,  # Short shutdown timeout
+        log_level=os.environ.get("LOG_LEVEL", "info").lower(),
         log_config=None  # Disable Uvicorn's default logging config to use ours
     )

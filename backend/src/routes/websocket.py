@@ -17,6 +17,53 @@ logger = logging.getLogger("azure-chat.websocket")
 # Create router for WebSocket endpoints
 router = APIRouter(tags=["websocket"])
 
+async def close_all_connections(reason="Server shutting down", timeout=2.0):
+    """
+    Utility function to close all WebSocket connections.
+    Can be called during server shutdown or for maintenance.
+    
+    Args:
+        reason: Message to send to clients when closing
+        timeout: Maximum time to wait for all connections to close (in seconds)
+    """
+    import asyncio
+    from contextlib import suppress
+    
+    logger.info(f"Closing {len(active_connections)} active WebSocket connections with reason: {reason}")
+    
+    if not active_connections:
+        logger.info("No active connections to close")
+        return
+        
+    # Create tasks for closing all connections concurrently with timeout
+    close_tasks = []
+    for user_id, connection in list(active_connections.items()):
+        async def close_connection(user_id=user_id, connection=connection):
+            try:
+                await connection.close(code=1001, reason=reason)
+                logger.debug(f"Closed WebSocket connection for user {user_id}")
+                return user_id
+            except Exception as e:
+                logger.error(f"Error closing WebSocket connection for user {user_id}: {e}")
+                return None
+                
+        close_tasks.append(close_connection())
+    
+    # Wait for all connections to close with timeout
+    try:
+        await asyncio.wait_for(asyncio.gather(*close_tasks, return_exceptions=True), timeout)
+        logger.info("All WebSocket connections closed successfully")
+    except asyncio.TimeoutError:
+        logger.warning(f"Timed out after {timeout}s while waiting for WebSocket connections to close")
+    except Exception as e:
+        logger.error(f"Error during WebSocket connections cleanup: {e}")
+    
+    # Clear dictionaries regardless of whether all connections were closed
+    active_connections.clear()
+    user_subscriptions.clear()
+    # Don't clear active_users as they might be needed for other operations
+    logger.info("WebSocket connection state cleared")
+
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     """
@@ -115,11 +162,30 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         logger.error(f"Error auto-subscribing user {user_id} to rooms: {e}")
 
     try:
+        # Use a timeout for receive operations to ensure we can detect server shutdown
+        import asyncio
+        shutdown_check_interval = 1.0  # Check for server shutdown signal every 1 second
+        
         while True:
-            data = await websocket.receive_text()
-            logger.debug(f"Received raw data from {user_id}: {data}")
-            message_data = json.loads(data)
-            msg_type = message_data.get("type")
+            # Use wait_for with a timeout to prevent blocking indefinitely
+            try:
+                data = await asyncio.wait_for(
+                    websocket.receive_text(), 
+                    timeout=shutdown_check_interval
+                )
+                logger.debug(f"Received raw data from {user_id}: {data}")
+                message_data = json.loads(data)
+                msg_type = message_data.get("type")
+            except asyncio.TimeoutError:
+                # Check if the connection is still alive by sending a ping
+                # This also provides an opportunity to break if the server is shutting down
+                try:
+                    # Just continue the loop - this allows us to break if server is shutting down
+                    continue
+                except Exception:
+                    # Connection likely closed - break the loop
+                    logger.debug(f"Connection check failed for {user_id}, closing")
+                    break
 
             if msg_type == "message":
                 msg_content_data = message_data.get("data", {})

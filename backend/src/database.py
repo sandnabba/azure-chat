@@ -592,3 +592,5 @@ class CosmosDBConnection:
                 logging.info("AsyncCosmosClient closed successfully.")
             except Exception as e:
                 logging.error(f"Error closing AsyncCosmosClient: {e}")
+                # Reset the client reference even if there was an error
+                self._client = None
