@@ -118,6 +118,18 @@ output "email_service_id" {
   value       = azurerm_email_communication_service.chat_email.id
 }
 
+# Service Bus Outputs
+output "servicebus_connection_string" {
+  description = "The primary connection string for the Service Bus namespace"
+  value       = azurerm_servicebus_namespace.chat_servicebus.default_primary_connection_string
+  sensitive   = true
+}
+
+output "servicebus_messages_topic_name" {
+  description = "The name of the Service Bus topic for chat messages"
+  value       = azurerm_servicebus_topic.chat_messages_topic.name
+}
+
 # Front Door Outputs
 output "front_door_endpoint_url" {
   description = "The URL of the Front Door endpoint"

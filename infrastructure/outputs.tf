@@ -30,6 +30,18 @@ output "communication_service_connection_string" {
   sensitive   = true
 }
 
+# --- Service Bus Outputs ---
+output "servicebus_connection_string" {
+  description = "The primary connection string for the Service Bus namespace"
+  value       = module.azure_chat.servicebus_connection_string
+  sensitive   = true
+}
+
+output "servicebus_messages_topic_name" {
+  description = "The name of the Service Bus topic for chat messages"
+  value       = module.azure_chat.servicebus_messages_topic_name
+}
+
 # --- Front Door Outputs ---
 output "front_door_endpoint_url" {
   description = "The URL of the Front Door endpoint"
