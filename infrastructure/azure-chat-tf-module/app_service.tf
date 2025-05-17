@@ -46,11 +46,11 @@ resource "azurerm_linux_web_app" "backend" {
   https_only          = true
 
   site_config {
-    always_on        = true
-    ftps_state       = "Disabled"
+    always_on           = true
+    ftps_state          = "Disabled"
     minimum_tls_version = "1.2"
-    websockets_enabled = true
-    app_command_line = "gunicorn src.app:app --bind 0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker --timeout 120 --log-level info --access-logfile - --error-logfile -"
+    websockets_enabled  = true
+    #app_command_line    = "gunicorn src.app:app --bind 0.0.0.0:8000 --worker-class uvicorn.workers.UvicornWorker --timeout 120 --log-level info --access-logfile - --error-logfile -"
 
     application_stack {
       docker_image_name        = "${var.backend_image_name}:${var.backend_image_tag}"
@@ -81,6 +81,7 @@ resource "azurerm_linux_web_app" "backend" {
     "WEBSITES_CONTAINER_START_TIME_LIMIT"   = "600"
     "COSMOS_ENDPOINT"                       = azurerm_cosmosdb_account.chat_db.endpoint
     "COSMOS_KEY"                            = azurerm_cosmosdb_account.chat_db.primary_key
+    "SERVICEBUS_CONNECTION_STRING"          = azurerm_servicebus_namespace.chat_servicebus.default_primary_connection_string
     "APPINSIGHTS_INSTRUMENTATIONKEY"        = azurerm_application_insights.chat_app_insights.instrumentation_key
     "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.chat_app_insights.connection_string
     "AZURE_STORAGE_CONNECTION_STRING"       = azurerm_storage_account.chat_storage.primary_connection_string
