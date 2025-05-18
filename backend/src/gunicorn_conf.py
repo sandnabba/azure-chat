@@ -1,6 +1,8 @@
 import logging
 import sys
 import os
+import threading
+import time
 
 # Standard gunicorn config
 bind = "0.0.0.0:8000" 
@@ -8,14 +10,18 @@ workers = 2
 worker_class = "uvicorn.workers.UvicornWorker"
 chdir = "/app"
 
-# Graceful shutdown configuration 
-graceful_timeout = 3  # Shorter timeout: Force kill workers after 3 seconds during graceful shutdown
+# Super aggressive shutdown configuration 
+graceful_timeout = 0  # Immediate force kill with no grace period
 timeout = 30  # Worker silent for more than this many seconds is killed and restarted
 keep_alive = 5  # How long to wait for requests on a Keep-Alive connection
 
+# Avoid infinite loops or hanging connections
+worker_max_requests = 1000       # Restart workers after this many requests
+worker_max_requests_jitter = 50  # Add jitter to avoid restarting all workers at once
+
 # Uvicorn-specific worker config with shorter timeouts
 worker_args = [
-    "--timeout-graceful-shutdown=3",  # 3s graceful shutdown in Uvicorn
+    "--timeout-graceful-shutdown=3",  # No graceful shutdown in Uvicorn
     "--timeout-keep-alive=5"         # 5s keep-alive timeout
 ]
 
@@ -114,3 +120,45 @@ logconfig_dict = {
         "uvicorn.access": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO"), "propagate": False},
     }
 }
+
+# Post-fork worker setup to handle signals properly
+def post_fork(server, worker):
+    """Configure the worker process as soon as it's forked"""
+    import signal
+    import sys
+    import os
+    import threading
+    from multiprocessing import current_process
+    
+    worker_logger = logging.getLogger("gunicorn.error")
+    worker_id = current_process().name
+    worker_logger.info(f"Worker {worker_id} initializing with aggressive signal handlers")
+    
+    def handle_sigterm(signum, frame):
+        """Immediately exit without any cleanup on SIGTERM/SIGINT"""
+        worker_logger.warning(f"Worker {worker_id} received signal {signum}, exiting immediately")
+        
+        # Try to notify any shutdown handlers but don't wait for them
+        try:
+            # We need to import here because this runs in the worker process
+            from src.routes.websocket import set_shutdown_flag
+            set_shutdown_flag()
+        except Exception:
+            pass
+        
+        # Force immediate exit
+        os._exit(0)
+    
+    # Register signal handlers - super aggressive
+    signal.signal(signal.SIGTERM, handle_sigterm)
+    signal.signal(signal.SIGINT, handle_sigterm)
+    
+    # Safety net: force kill this worker if it runs too long
+    def force_exit_worker():
+        worker_logger.critical(f"Worker {worker_id} safety timeout reached, forcing exit")
+        os._exit(1)  # Non-zero exit to indicate abnormal termination
+    
+    # Set up a watchdog timer - if the worker gets stuck, this will kill it after 60 seconds
+    worker_max_lifetime = threading.Timer(60.0, force_exit_worker)
+    worker_max_lifetime.daemon = True
+    worker_max_lifetime.start()

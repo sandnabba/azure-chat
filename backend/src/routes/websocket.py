@@ -6,6 +6,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import logging
 import json
 import uuid
+import asyncio
 from datetime import datetime
 
 from src.models import ChatRoom, ChatMessage
@@ -17,7 +18,16 @@ logger = logging.getLogger("azure-chat.websocket")
 # Create router for WebSocket endpoints
 router = APIRouter(tags=["websocket"])
 
-async def close_all_connections(reason="Server shutting down", timeout=2.0):
+# Flag to track if server is shutting down
+server_is_shutting_down = False
+
+# Signal handler to set shutdown flag
+def set_shutdown_flag():
+    global server_is_shutting_down
+    logger.info("WebSocket module notified of server shutdown")
+    server_is_shutting_down = True
+
+async def close_all_connections(reason="Server shutting down", timeout=1.0):
     """
     Utility function to close all WebSocket connections.
     Can be called during server shutdown or for maintenance.
@@ -26,7 +36,6 @@ async def close_all_connections(reason="Server shutting down", timeout=2.0):
         reason: Message to send to clients when closing
         timeout: Maximum time to wait for all connections to close (in seconds)
     """
-    import asyncio
     from contextlib import suppress
     
     logger.info(f"Closing {len(active_connections)} active WebSocket connections with reason: {reason}")
@@ -40,7 +49,9 @@ async def close_all_connections(reason="Server shutting down", timeout=2.0):
     for user_id, connection in list(active_connections.items()):
         async def close_connection(user_id=user_id, connection=connection):
             try:
-                await connection.close(code=1001, reason=reason)
+                # Force close the connection with a short timeout
+                with suppress(Exception):
+                    await asyncio.wait_for(connection.close(code=1001, reason=reason), 0.5)
                 logger.debug(f"Closed WebSocket connection for user {user_id}")
                 return user_id
             except Exception as e:
@@ -49,20 +60,54 @@ async def close_all_connections(reason="Server shutting down", timeout=2.0):
                 
         close_tasks.append(close_connection())
     
-    # Wait for all connections to close with timeout
+    # Wait for connections to close with a short timeout
     try:
         await asyncio.wait_for(asyncio.gather(*close_tasks, return_exceptions=True), timeout)
-        logger.info("All WebSocket connections closed successfully")
+        logger.info("WebSocket close attempts completed")
     except asyncio.TimeoutError:
         logger.warning(f"Timed out after {timeout}s while waiting for WebSocket connections to close")
     except Exception as e:
         logger.error(f"Error during WebSocket connections cleanup: {e}")
     
-    # Clear dictionaries regardless of whether all connections were closed
+    # Clear dictionaries immediately regardless of whether connections were properly closed
+    # This will help the application shutdown properly even if connections aren't closed
+    conn_count = len(active_connections)
     active_connections.clear()
     user_subscriptions.clear()
-    # Don't clear active_users as they might be needed for other operations
-    logger.info("WebSocket connection state cleared")
+    logger.info(f"Forcibly cleared {conn_count} WebSocket connections from state")
+
+async def force_close_all_websockets():
+    """
+    Immediately close all WebSocket connections without waiting.
+    This is more aggressive than close_all_connections and should be used
+    only as a last resort.
+    """
+    logger.warning(f"Force-closing {len(active_connections)} WebSocket connections")
+    
+    # Just grab a snapshot of the connections to avoid dictionary changed during iteration errors
+    connections = list(active_connections.items())
+    
+    # Clear dictionaries FIRST - this prevents any new operations from using these connections
+    conn_count = len(active_connections)
+    active_connections.clear()
+    user_subscriptions.clear()
+    logger.info(f"Forcibly cleared {conn_count} active connections from state dictionaries")
+    
+    # Try to force close each connection
+    for user_id, connection in connections:
+        try:
+            # Very aggressive non-blocking close attempt - don't wait for confirmation
+            connection.close_code = 1001  # Going Away
+            connection.client_state = None  # Break the connection
+            connection.application_state = None  # Break the connection
+            
+            # Don't wait for the connection to actually close
+            logger.debug(f"Force-terminated connection for user {user_id}")
+        except Exception as e:
+            logger.error(f"Error force-closing WebSocket for {user_id}: {e}")
+            # Continue with next connection, we've already cleared the dictionaries
+            
+    logger.info("All WebSocket connections forcibly terminated")
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
@@ -71,6 +116,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     This implementation uses a single WebSocket connection per user (not per room),
     allowing a user to receive messages from all rooms they're subscribed to.
     """
+    # First check if server is shutting down before doing anything
+    if server_is_shutting_down:
+        logger.info(f"Server is shutting down, rejecting WebSocket connection for user {user_id}")
+        await websocket.close(code=1001, reason="Server shutting down")
+        return
+
     # Check if user is registered - first check active_users, then database
     if user_id not in active_users:
         # Try to find user in database
@@ -162,11 +213,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         logger.error(f"Error auto-subscribing user {user_id} to rooms: {e}")
 
     try:
-        # Use a timeout for receive operations to ensure we can detect server shutdown
-        import asyncio
-        shutdown_check_interval = 1.0  # Check for server shutdown signal every 1 second
+        # Use a shorter timeout for receive operations to ensure we can detect server shutdown faster
+        shutdown_check_interval = 0.2  # Check for server shutdown signal every 0.2 seconds
         
         while True:
+            # Check if server is shutting down
+            if server_is_shutting_down:
+                logger.info(f"Server is shutting down, closing WebSocket connection for user {user_id}")
+                # Force close the connection and exit the loop immediately
+                await websocket.close(code=1001, reason="Server shutting down")
+                break
+
             # Use wait_for with a timeout to prevent blocking indefinitely
             try:
                 data = await asyncio.wait_for(
@@ -177,22 +234,23 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 message_data = json.loads(data)
                 msg_type = message_data.get("type")
             except asyncio.TimeoutError:
-                # Check if the connection is still alive by sending a ping
-                # This also provides an opportunity to break if the server is shutting down
-                try:
-                    # Just continue the loop - this allows us to break if server is shutting down
-                    continue
-                except Exception:
-                    # Connection likely closed - break the loop
-                    logger.debug(f"Connection check failed for {user_id}, closing")
-                    break
+                # Just continue the loop - this allows us to break if server is shutting down
+                continue
+            except Exception as e:
+                logger.error(f"Error receiving data from {user_id}: {e}")
+                break
 
             if msg_type == "message":
                 msg_content_data = message_data.get("data", {})
                 room_id = msg_content_data.get("chatId")
 
                 if not room_id:
-                    await websocket.send_json({"type": "error", "message": "chatId missing in message data"})
+                    try:
+                        await websocket.send_json({"type": "error", "message": "chatId missing in message data"})
+                    except Exception:
+                        # Socket might be closed - break out
+                        logger.warning(f"Failed to send error message to {user_id}, connection may be closed")
+                        break
                     continue
                 
                 # Ensure senderName is correctly fetched
@@ -258,8 +316,13 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             except Exception as close_e:
                 logger.error(f"Error trying to close WebSocket for {user_id} after an error: {close_e}")
     finally:
+        # Clean up resources, but only if not already cleaned up by shutdown process
         if user_id in active_connections:
-            del active_connections[user_id]
+            try:
+                del active_connections[user_id]
+                logger.debug(f"Removed user {user_id} from active_connections")
+            except Exception:
+                pass
         
         disconnected_user_info = active_users.get(user_id)
         if not disconnected_user_info:
@@ -269,9 +332,24 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         else:
             # Also remove the user from active_users list since they've disconnected
             if user_id in active_users:
-                del active_users[user_id]
-                logger.info(f"Removed user {user_id} from active_users list")
+                try:
+                    del active_users[user_id]
+                    logger.info(f"Removed user {user_id} from active_users list")
+                except Exception:
+                    pass
 
+        # During shutdown, don't try to send notifications
+        if server_is_shutting_down:
+            logger.debug(f"Server is shutting down, skipping offline notifications for {user_id}")
+            if user_id in user_subscriptions:
+                try:
+                    del user_subscriptions[user_id]
+                except Exception:
+                    pass
+            logger.info(f"Cleaned up resources for disconnected user {user_id}")
+            return
+
+        # Only send notifications if server is not shutting down
         # Notify all remaining users about this user going offline
         user_offline_notification = {
             "type": "user_offline",

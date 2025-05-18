@@ -25,3 +25,41 @@ storage_service = AzureStorageService()
 active_connections: Dict[str, WebSocket] = {}  # userId -> websocket
 user_subscriptions: Dict[str, List[str]] = {}  # userId -> List[roomId]
 active_users: Dict[str, User] = {}  # userId -> User
+
+# Function to forcibly clean up resources during shutdown
+async def force_cleanup():
+    """
+    Force cleanup of all resources, especially WebSocket connections.
+    Call this during shutdown to ensure the application can terminate properly.
+    """
+    import asyncio
+    
+    logger.info("Shutting down application...")
+    logger.info(f"Closing {len(active_connections)} active WebSocket connections...")
+    
+    # Clear dictionaries FIRST to prevent new operations
+    active_connections.clear()
+    user_subscriptions.clear()
+    logger.info("Cleared connection dictionaries")
+    
+    try:
+        # Import here to avoid circular import
+        from src.routes.websocket import force_close_all_websockets
+        # Use a very short timeout so we don't block shutdown
+        await asyncio.wait_for(force_close_all_websockets(), 0.5)
+    except asyncio.TimeoutError:
+        logger.warning("WebSocket closure timed out, continuing with shutdown")
+    except Exception as e:
+        logger.error(f"Error force-closing WebSockets: {e}")
+    
+    # Close database connection with very short timeout
+    logger.info("Closing database connection...")
+    try:
+        await asyncio.wait_for(db.close(), 0.5)
+        logger.info("Database connection closed successfully.")
+    except asyncio.TimeoutError:
+        logger.warning("Database connection close timed out")
+    except Exception as e:
+        logger.error(f"Error closing database connection: {e}")
+        
+    logger.info("Shutdown complete.")

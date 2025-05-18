@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from datetime import datetime
 import uuid
+import signal
+import sys
+import asyncio
 
 # Import the logging configuration
 from src.logging_config import configure_logging
@@ -16,14 +19,16 @@ app_logger = configure_logging()
 
 from src.models import ChatRoom
 from src.state import db, logger
+from src.state import force_cleanup
 
 # Import route modules
 from src.routes.debug import router as debug_router
 from src.routes.auth import router as auth_router
 from src.routes.rooms import router as rooms_router
 from src.routes.messages import router as messages_router
-from src.routes.websocket import router as websocket_router
+from src.routes.websocket import router as websocket_router, set_shutdown_flag
 from src.routes.users import router as users_router
+from src.routes.shutdown_debug import router as shutdown_debug_router
 
 # Create main application
 def create_app() -> FastAPI:
@@ -52,13 +57,41 @@ def create_app() -> FastAPI:
     app.include_router(messages_router)
     app.include_router(websocket_router)
     app.include_router(users_router)
+    app.include_router(shutdown_debug_router)
 
+    # Set up signal handlers for graceful shutdown
+    def setup_signal_handlers():
+        """Set up signal handlers for graceful shutdown"""
+        loop = asyncio.get_running_loop()
+        
+        # Signal handlers for graceful termination
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(
+                sig,
+                lambda sig=sig: asyncio.create_task(handle_shutdown_signal(sig))
+            )
+        logger.info("Signal handlers for graceful shutdown have been set up")
+    
+    async def handle_shutdown_signal(sig):
+        """Handle shutdown signals by forcibly cleaning up resources"""
+        logger.warning(f"Received shutdown signal {sig.name}, initiating forced cleanup")
+        # Set the websocket shutdown flag first
+        set_shutdown_flag()
+        # Then perform a forced cleanup of resources
+        await force_cleanup()
+        
     # Set up lifecycle events
     @app.on_event("startup")
     async def startup_event():
         """Verify and create necessary containers at startup"""
         logger.info("Starting application...")
         
+        # Set up signal handlers for graceful shutdown
+        try:
+            setup_signal_handlers()
+        except Exception as e:
+            logger.error(f"Failed to set up signal handlers: {e}")
+            
         if not db.dev_mode:
             logger.info("Verifying database and containers...")
             
@@ -91,33 +124,64 @@ def create_app() -> FastAPI:
 
     @app.on_event("shutdown")
     async def shutdown_event():
-        import asyncio
+        import threading
+        import os
         from src.state import active_connections
+        from src.routes.websocket import close_all_connections, force_close_all_websockets
+        
+        # First, set the shutdown flag to notify all websocket handlers
+        set_shutdown_flag()
         
         logger.info("Shutting down application...")
         
-        # First close all WebSocket connections directly
-        logger.info(f"Closing {len(active_connections)} active WebSocket connections...")
-        for user_id, connection in list(active_connections.items()):
-            try:
-                await connection.close(code=1001, reason="Server shutting down")
-                logger.debug(f"Closed WebSocket connection for user {user_id}")
-            except Exception as e:
-                logger.warning(f"Error closing WebSocket connection for user {user_id}: {e}")
+        # Schedule forced application exit after a very short timeout
+        # This will be our safety net if normal cleanup hangs
+        threading.Timer(1.0, lambda: os._exit(0)).start()
+        logger.info("Safety timer set: Forcing exit in 1 second regardless of cleanup status")
         
-        # Clear connections dictionary
+        # Clear connections immediately - don't wait
         active_connections.clear()
-            
-        # Now close the database connection
+        
+        # Use the most aggressive close method
+        try:
+            # Very short timeout
+            await asyncio.wait_for(force_close_all_websockets(), 0.5)
+        except asyncio.TimeoutError:
+            logger.warning("WebSocket closure timed out")
+        except Exception as e:
+            logger.error(f"Error during WebSocket cleanup: {e}")
+        
+        # Now close the database connection with short timeout
         logger.info("Closing database connection...")
         try:
-            await db.close()
+            await asyncio.wait_for(db.close(), 0.5)
+        except asyncio.TimeoutError:
+            logger.warning("Database connection close timed out")
         except Exception as e:
             logger.error(f"Error during database closure: {e}")
             
-        logger.info("Shutdown complete.")
+        logger.info("Shutdown complete - application will force exit shortly")
 
     return app
+
+# Custom signal handler
+def handle_signal(signal_number, frame):
+    """Handle termination signals for graceful shutdown."""
+    import threading
+    import os
+    
+    logger.info(f"Received signal {signal_number}, initiating immediate shutdown...")
+    
+    # Set the websocket shutdown flag
+    set_shutdown_flag()
+    
+    # Force application exit almost immediately - give just enough time for the flag to be set
+    threading.Timer(0.1, lambda: os._exit(0)).start()
+    logger.info("Forcing immediate application exit...")
+
+# Register signal handlers
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
 
 # Initialize application
 app = create_app()
@@ -128,13 +192,26 @@ if __name__ == "__main__":
     
     app_logger.info("Running application directly with uvicorn")
     # Simple development server configuration
+    
+    # Set up a handler for SIGTERM and SIGINT to ensure clean shutdown
+    def handle_signal(sig, frame):
+        app_logger.warning(f"Received signal {sig}, forcing immediate exit")
+        # Set the websocket shutdown flag
+        set_shutdown_flag()
+        # Force immediate exit to avoid hanging
+        os._exit(0)
+        
+    # Register signal handlers
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    
     uvicorn.run(
         "src.main:app",
         host="0.0.0.0",
         port=int(os.environ.get("PORT", "8000")),
         reload=True,
         timeout_keep_alive=5,     
-        timeout_graceful_shutdown=3,  # Short shutdown timeout
+        timeout_graceful_shutdown=1,  # Even shorter shutdown timeout
         log_level=os.environ.get("LOG_LEVEL", "info").lower(),
         log_config=None  # Disable Uvicorn's default logging config to use ours
     )
