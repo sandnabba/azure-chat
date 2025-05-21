@@ -5,11 +5,10 @@ This module initializes the FastAPI application and includes all routes.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from datetime import datetime
-import uuid
 import signal
-import sys
 import asyncio
+import os
+import threading
 from contextlib import asynccontextmanager
 
 # Import the logging configuration
@@ -77,23 +76,14 @@ async def lifespan(app: FastAPI):
     # Yield control to the application
     yield
     
-    # Shutdown code (previously in the shutdown_event)
-    import os
-    from src.routes.websocket import force_close_all_websockets
-    
-    # First, set the shutdown flag to notify all websocket handlers
-    set_shutdown_flag()
-    
+    # Shutdown code
     logger.info("Shutting down application...")
     
-    # Call the unified shutdown function from state.py
-    from src.state import perform_shutdown
     try:
         await perform_shutdown()
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
         # Force exit as a last resort
-        import os
         os._exit(1)
 
 
@@ -156,7 +146,6 @@ app = create_app()
 
 if __name__ == "__main__":
     """Run the application when executed directly."""
-    import os
     
     app_logger.info("Running application directly with uvicorn")
     # Simple development server configuration
@@ -164,13 +153,10 @@ if __name__ == "__main__":
     # Set up a handler for SIGTERM and SIGINT to ensure clean shutdown when running with uvicorn
     def handle_signal(sig, frame):
         app_logger.warning(f"Received signal {sig}, initiating shutdown")
-        # Import and call set_shutdown_flag to mark shutdown in progress
-        from src.state import set_shutdown_flag
+        # Call set_shutdown_flag to mark shutdown in progress
         set_shutdown_flag()
-        # Force exit after a short delay
-        import threading
-        import os
-        threading.Timer(0.5, lambda: os._exit(0)).start()
+        # Force exit after a short delay to ensure clean shutdown
+        threading.Timer(1.0, lambda: os._exit(0)).start()
         app_logger.info("Application will exit shortly...")
         
     # Register signal handlers for direct uvicorn execution

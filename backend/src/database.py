@@ -1,11 +1,9 @@
 import os
 from typing import List, Optional
 import logging
-import asyncio
-from azure.cosmos import CosmosClient, exceptions
+from azure.cosmos import exceptions
 from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from dotenv import load_dotenv
-import json
 import uuid
 from datetime import datetime
 

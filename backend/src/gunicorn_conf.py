@@ -1,8 +1,6 @@
 import logging
 import sys
 import os
-import threading
-import time
 
 # Standard gunicorn config
 bind = "0.0.0.0:8000" 
@@ -10,8 +8,7 @@ workers = 2
 worker_class = "uvicorn.workers.UvicornWorker"
 chdir = "/app"
 
-# Super aggressive shutdown configuration 
-graceful_timeout = 5  # Immediate force kill with no grace period
+graceful_timeout = 5
 timeout = 30  # Worker silent for more than this many seconds is killed and restarted
 keep_alive = 5  # How long to wait for requests on a Keep-Alive connection
 
@@ -21,8 +18,8 @@ worker_max_requests_jitter = 50  # Add jitter to avoid restarting all workers at
 
 # Uvicorn-specific worker config with shorter timeouts
 worker_args = [
-    "--timeout-graceful-shutdown=3",  # No graceful shutdown in Uvicorn
-    "--timeout-keep-alive=5"         # 5s keep-alive timeout
+    "--timeout-graceful-shutdown=4",
+    "--timeout-keep-alive=5"
 ]
 
 # Logging config
