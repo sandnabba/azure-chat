@@ -15,14 +15,14 @@ def configure_logging():
 
     # Configure colored logging
     class ColoredFormatter(logging.Formatter):
-        """Custom formatter with colors"""
+        """Custom formatter with colors and process ID"""
         grey = "\x1b[38;20m"
         green = "\x1b[32;20m"
         yellow = "\x1b[33;20m"
         red = "\x1b[31;20m"
         bold_red = "\x1b[31;1m"
         reset = "\x1b[0m"
-        format_str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        format_str = "%(asctime)s - %(name)s[%(process)d] - %(levelname)s - %(message)s"
 
         FORMATS = {
             logging.DEBUG: grey + format_str + reset,

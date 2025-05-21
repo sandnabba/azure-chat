@@ -43,7 +43,7 @@ dev:
 	  -p $(PORT):$(PORT) \
 	  -v $(PWD)/src:/app/src \
 	  --name $(DEV_CONTAINER_NAME) \
-	  $(IMAGE_NAME) uvicorn src.main:app --reload --host 0.0.0.0 --port $(PORT)
+	  $(IMAGE_NAME) gunicorn src.main:app --config src/gunicorn_conf.py --reload
 
 shell:
 	docker exec -it $(CONTAINER_NAME) /bin/sh

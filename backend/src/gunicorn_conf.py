@@ -3,10 +3,24 @@ import sys
 import os
 
 # Standard gunicorn config
-bind = "0.0.0.0:8000"
+bind = "0.0.0.0:8000" 
 workers = 2
 worker_class = "uvicorn.workers.UvicornWorker"
 chdir = "/app"
+
+graceful_timeout = 5
+timeout = 30  # Worker silent for more than this many seconds is killed and restarted
+keep_alive = 5  # How long to wait for requests on a Keep-Alive connection
+
+# Avoid infinite loops or hanging connections
+worker_max_requests = 1000       # Restart workers after this many requests
+worker_max_requests_jitter = 50  # Add jitter to avoid restarting all workers at once
+
+# Uvicorn-specific worker config with shorter timeouts
+worker_args = [
+    "--timeout-graceful-shutdown=4",
+    "--timeout-keep-alive=5"
+]
 
 # Logging config
 # Class for colored logs (same as in app.py)

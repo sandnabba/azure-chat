@@ -1,11 +1,9 @@
 import os
 from typing import List, Optional
 import logging
-import asyncio
-from azure.cosmos import CosmosClient, exceptions
+from azure.cosmos import exceptions
 from azure.cosmos.aio import CosmosClient as AsyncCosmosClient
 from dotenv import load_dotenv
-import json
 import uuid
 from datetime import datetime
 
@@ -592,3 +590,5 @@ class CosmosDBConnection:
                 logging.info("AsyncCosmosClient closed successfully.")
             except Exception as e:
                 logging.error(f"Error closing AsyncCosmosClient: {e}")
+                # Reset the client reference even if there was an error
+                self._client = None
