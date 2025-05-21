@@ -4,9 +4,9 @@ Debug endpoints for testing websocket shutdown in the Azure Chat application.
 from fastapi import APIRouter
 import logging
 
-# Import state and websocket functions
-from src.state import active_connections, force_cleanup
-from src.routes.websocket import set_shutdown_flag, force_close_all_websockets
+# Import state functions
+from src.state import active_connections, set_shutdown_flag, perform_shutdown
+from src.routes.websocket import force_close_all_websockets
 
 # Get logger for this module
 logger = logging.getLogger("azure-chat.shutdown_debug")
@@ -28,15 +28,12 @@ async def force_websocket_cleanup():
     logger.warning("Manually triggering websocket cleanup")
     connections_before = len(active_connections)
     
-    # Set the shutdown flag first
-    set_shutdown_flag()
-    
-    # Then close all connections
-    await force_close_all_websockets()
+    # Use the centralized shutdown function that handles everything
+    await perform_shutdown()
     
     return {
         "success": True,
-        "message": "WebSocket connections have been forcibly closed",
+        "message": "Application shutdown sequence initiated",
         "connections_before": connections_before,
         "connections_after": len(active_connections)
     }

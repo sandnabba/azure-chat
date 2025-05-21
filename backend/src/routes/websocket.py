@@ -18,14 +18,14 @@ logger = logging.getLogger("azure-chat.websocket")
 # Create router for WebSocket endpoints
 router = APIRouter(tags=["websocket"])
 
-# Flag to track if server is shutting down
-server_is_shutting_down = False
+# Import the global shutdown flag from state
+from src.state import is_shutting_down
 
-# Signal handler to set shutdown flag
+# Signal handler to set shutdown flag - kept for compatibility
 def set_shutdown_flag():
-    global server_is_shutting_down
     logger.info("WebSocket module notified of server shutdown")
-    server_is_shutting_down = True
+    # The flag is now managed centrally in the state module
+    # This function is kept for backward compatibility
 
 async def close_all_connections(reason="Server shutting down", timeout=1.0):
     """
@@ -117,7 +117,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     allowing a user to receive messages from all rooms they're subscribed to.
     """
     # First check if server is shutting down before doing anything
-    if server_is_shutting_down:
+    if is_shutting_down:
         logger.info(f"Server is shutting down, rejecting WebSocket connection for user {user_id}")
         await websocket.close(code=1001, reason="Server shutting down")
         return
@@ -218,7 +218,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         
         while True:
             # Check if server is shutting down
-            if server_is_shutting_down:
+            if is_shutting_down:
                 logger.info(f"Server is shutting down, closing WebSocket connection for user {user_id}")
                 # Force close the connection and exit the loop immediately
                 await websocket.close(code=1001, reason="Server shutting down")
@@ -339,7 +339,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     pass
 
         # During shutdown, don't try to send notifications
-        if server_is_shutting_down:
+        if is_shutting_down:
             logger.debug(f"Server is shutting down, skipping offline notifications for {user_id}")
             if user_id in user_subscriptions:
                 try:
