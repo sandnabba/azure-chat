@@ -28,7 +28,6 @@ from src.routes.rooms import router as rooms_router
 from src.routes.messages import router as messages_router
 from src.routes.websocket import router as websocket_router
 from src.routes.users import router as users_router
-from src.routes.shutdown_debug import router as shutdown_debug_router
 
 # Create lifespan context manager for handling startup/shutdown events
 @asynccontextmanager
@@ -79,10 +78,8 @@ async def lifespan(app: FastAPI):
     yield
     
     # Shutdown code (previously in the shutdown_event)
-    import threading
     import os
-    from src.state import active_connections
-    from src.routes.websocket import close_all_connections, force_close_all_websockets
+    from src.routes.websocket import force_close_all_websockets
     
     # First, set the shutdown flag to notify all websocket handlers
     set_shutdown_flag()
@@ -148,7 +145,6 @@ def create_app() -> FastAPI:
     app.include_router(messages_router)
     app.include_router(websocket_router)
     app.include_router(users_router)
-    app.include_router(shutdown_debug_router)
 
     return app
 

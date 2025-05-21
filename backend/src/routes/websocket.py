@@ -21,12 +21,6 @@ router = APIRouter(tags=["websocket"])
 # Import the global shutdown flag from state
 from src.state import is_shutting_down
 
-# Signal handler to set shutdown flag - kept for compatibility
-def set_shutdown_flag():
-    logger.info("WebSocket module notified of server shutdown")
-    # The flag is now managed centrally in the state module
-    # This function is kept for backward compatibility
-
 async def close_all_connections(reason="Server shutting down", timeout=1.0):
     """
     Utility function to close all WebSocket connections.
@@ -82,16 +76,17 @@ async def force_close_all_websockets():
     This is more aggressive than close_all_connections and should be used
     only as a last resort.
     """
-    logger.warning(f"Force-closing {len(active_connections)} WebSocket connections")
+    conn_count = len(active_connections)
+    if conn_count > 0:
+        logger.warning(f"Force-closing {conn_count} WebSocket connections")
     
     # Just grab a snapshot of the connections to avoid dictionary changed during iteration errors
     connections = list(active_connections.items())
     
     # Clear dictionaries FIRST - this prevents any new operations from using these connections
-    conn_count = len(active_connections)
     active_connections.clear()
     user_subscriptions.clear()
-    logger.info(f"Forcibly cleared {conn_count} active connections from state dictionaries")
+    logger.debug(f"Cleared {conn_count} connections from state dictionaries")
     
     # Try to force close each connection
     for user_id, connection in connections:
@@ -106,8 +101,11 @@ async def force_close_all_websockets():
         except Exception as e:
             logger.error(f"Error force-closing WebSocket for {user_id}: {e}")
             # Continue with next connection, we've already cleared the dictionaries
-            
-    logger.info("All WebSocket connections forcibly terminated")
+    
+    if connections:
+        logger.info("All WebSocket connections terminated")
+    else:
+        logger.debug("No WebSocket connections needed termination")
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):

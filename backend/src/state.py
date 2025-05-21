@@ -38,10 +38,6 @@ def set_shutdown_flag():
     global is_shutting_down
     logger.info("Setting global shutdown flag")
     is_shutting_down = True
-    
-    # Also update the websocket module's flag to maintain compatibility
-    from src.routes.websocket import set_shutdown_flag as set_ws_flag
-    set_ws_flag()
 
 async def perform_shutdown():
     """
@@ -55,17 +51,16 @@ async def perform_shutdown():
     # Set the flag first to prevent new operations
     set_shutdown_flag()
     
-    logger.info("Shutting down application...")
     logger.info(f"Closing {len(active_connections)} active WebSocket connections...")
     
     # Schedule forced application exit after a short timeout as a safety net
     threading.Timer(1.5, lambda: os._exit(0)).start()
-    logger.info("Safety timer set: Forcing exit in 1.5 seconds regardless of cleanup status")
+    logger.debug("Safety timer set: Forcing exit in 1.5 seconds regardless of cleanup status")
     
     # Clear dictionaries to prevent new operations
     active_connections.clear()
     user_subscriptions.clear()
-    logger.info("Cleared connection dictionaries")
+    logger.debug("Cleared connection dictionaries")
     
     try:
         # Import here to avoid circular import
@@ -81,7 +76,7 @@ async def perform_shutdown():
     logger.info("Closing database connection...")
     try:
         await asyncio.wait_for(db.close(), 0.5)
-        logger.info("Database connection closed successfully.")
+        logger.debug("Database connection closed successfully.")
     except asyncio.TimeoutError:
         logger.warning("Database connection close timed out")
     except Exception as e:
