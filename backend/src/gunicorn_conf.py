@@ -11,7 +11,7 @@ worker_class = "uvicorn.workers.UvicornWorker"
 chdir = "/app"
 
 # Super aggressive shutdown configuration 
-graceful_timeout = 0  # Immediate force kill with no grace period
+graceful_timeout = 5  # Immediate force kill with no grace period
 timeout = 30  # Worker silent for more than this many seconds is killed and restarted
 keep_alive = 5  # How long to wait for requests on a Keep-Alive connection
 
@@ -120,45 +120,3 @@ logconfig_dict = {
         "uvicorn.access": {"handlers": ["console"], "level": os.getenv("LOG_LEVEL", "INFO"), "propagate": False},
     }
 }
-
-# Post-fork worker setup to handle signals properly
-def post_fork(server, worker):
-    """Configure the worker process as soon as it's forked"""
-    import signal
-    import sys
-    import os
-    import threading
-    from multiprocessing import current_process
-    
-    worker_logger = logging.getLogger("gunicorn.error")
-    worker_id = current_process().name
-    worker_logger.info(f"Worker {worker_id} initializing with aggressive signal handlers")
-    
-    def handle_sigterm(signum, frame):
-        """Immediately exit without any cleanup on SIGTERM/SIGINT"""
-        worker_logger.warning(f"Worker {worker_id} received signal {signum}, exiting immediately")
-        
-        # Try to notify any shutdown handlers but don't wait for them
-        try:
-            # We need to import here because this runs in the worker process
-            from src.routes.websocket import set_shutdown_flag
-            set_shutdown_flag()
-        except Exception:
-            pass
-        
-        # Force immediate exit
-        os._exit(0)
-    
-    # Register signal handlers - super aggressive
-    signal.signal(signal.SIGTERM, handle_sigterm)
-    signal.signal(signal.SIGINT, handle_sigterm)
-    
-    # Safety net: force kill this worker if it runs too long
-    def force_exit_worker():
-        worker_logger.critical(f"Worker {worker_id} safety timeout reached, forcing exit")
-        os._exit(1)  # Non-zero exit to indicate abnormal termination
-    
-    # Set up a watchdog timer - if the worker gets stuck, this will kill it after 60 seconds
-    worker_max_lifetime = threading.Timer(60.0, force_exit_worker)
-    worker_max_lifetime.daemon = True
-    worker_max_lifetime.start()
